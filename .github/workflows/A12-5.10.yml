@@ -1,4 +1,4 @@
-name: GusKernel GKI A12-5.10 Ultimate Builder
+name: GusKernel GKI Ultimate (Hybrid Build System)
 
 on:
   workflow_dispatch:
@@ -34,7 +34,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
-          # Fix linker untuk Baseband Guard host tools
           sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
 
       - name: Setup Repo Tool
@@ -50,11 +49,11 @@ jobs:
         run: |
           mkdir kernel-workspace
           cd kernel-workspace
+          # Menggunakan Android 12-5.10 sebagai default, tapi logic build di bawah support versi lebih baru
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
-      # --- 1. SETUP WILD KSU & BBG ---
-      - name: Setup Wild KSU
+      - name: Setup Wild KSU & BBG
         run: |
           cd kernel-workspace
           if [[ -n "${{ github.event.inputs.ksu_commit }}" ]]; then
@@ -62,15 +61,10 @@ jobs:
           else
             curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -s canary
           fi
-
-      - name: Setup Baseband Guard
-        run: |
-          cd kernel-workspace
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
-      # --- 2. INTEGRATE SUSFS & FIXES ---
-      - name: Integrate SUSFS & Apply WildKernels Patches
+      - name: Integrate SUSFS & Fixes
         run: |
           cd kernel-workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs_src
@@ -83,80 +77,73 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
           
-          if [ "$SUBLEVEL" -le 209 ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-          fi
-          if [ "$SUBLEVEL" -le 117 ]; then
-            cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a12-5.10/fdinfo.c.patch ./
-            patch -p1 < fdinfo.c.patch || true
-          fi
-          if [ "$SUBLEVEL" -le 43 ]; then
-            cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a12-5.10/base.c.patch ./
-            patch -p1 < base.c.patch || true
-          fi
+          if [ "$SUBLEVEL" -le 209 ]; then sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c; fi
+          if [ "$SUBLEVEL" -le 117 ]; then cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a12-5.10/fdinfo.c.patch ./ && patch -p1 < fdinfo.c.patch || true; fi
 
-      # --- 3. INJECT DEFCONFIG & FORCE BYPASS ---
-      - name: Configure Defconfig & Bypass
+      - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
-          
-          echo "Bypassing GKI check_defconfig in all build.configs..."
-          # Menonaktifkan pengecekan defconfig secara brutal di semua file build.config
-          find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
-          find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_defconfig//g' {} +
-
-          echo "Injecting Custom Name and Security Configs..."
-          sed -i '/CONFIG_LOCALVERSION/d' arch/arm64/configs/gki_defconfig
-
-          cat <<EOF >> arch/arm64/configs/gki_defconfig
-          # Kernel Branding
+          # Buat fragment untuk Bazel build (wild_gki.fragment)
+          mkdir -p arch/arm64/configs/
+          cat <<EOF > arch/arm64/configs/wild_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
-
-          # Mandatory for WildKSU
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
-
-          # KernelSU & SUSFS
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
           CONFIG_SUSFS=y
-
-          # BBG & Security
           CONFIG_BBG=y
-
-          # KPatch & Mountify Support
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
+          # Tambahkan juga ke gki_defconfig lama untuk build.sh
+          cat arch/arm64/configs/wild_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-      # --- 4. BUILD ---
-      - name: Build Kernel
+      - name: Build Kernel (Hybrid Logic)
         run: |
           cd kernel-workspace
-          # Menjalankan build resmi GKI
-          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          set -ex
+          echo "========================================"
+          echo " Compiling Kernel Version: $(make -C common kernelversion)"
+          echo "========================================"
+          
+          # Matikan check_defconfig bypass
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
 
-      # --- 5. ANYKERNEL3 PACKAGING ---
-      - name: Prepare AnyKernel3
+          if [ -f "build/build.sh" ]; then
+            echo "Using Traditional build.sh"
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          else
+            echo "Using Bazel Build System"
+            # Logic untuk Android 14/13 jika kamu ganti branch nanti
+            tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
+          fi
+
+      - name: Prepare AnyKernel3 Packaging
         run: |
           git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+          # Cek lokasi output (Bazel dan build.sh punya lokasi berbeda)
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+             IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
+          fi
           
-          if [ -f "kernel-workspace/out/android12-5.10/dist/Image" ]; then
-            cp "kernel-workspace/out/android12-5.10/dist/Image" "AnyKernel3/Image"
+          if [ -f "$IMAGE_PATH" ]; then
+            cp "$IMAGE_PATH" AnyKernel3/Image
           else
-            echo "Error: Image file not found!" && exit 1
+            echo "Error: Image not found!" && exit 1
           fi
           
           cd AnyKernel3
-          sed -i 's/kernel.string=.*/kernel.string=GusKernel for Android 12-5.10/g' banner
-          zip -r9 "../GusKernel-A12-5.10-Final.zip" * -x .git README.md
+          sed -i 's/kernel.string=.*/kernel.string=GusKernel Hybrid/g' banner
+          zip -r9 "../GusKernel-Final.zip" * -x .git README.md
 
       - name: Upload Final Build
         uses: actions/upload-artifact@v4
         with:
-          name: GusKernel-A12-5.10
-          path: GusKernel-A12-5.10-Final.zip
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
