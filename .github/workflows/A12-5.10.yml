@@ -1,4 +1,4 @@
-name: GKI Android 12-5.10 Ultimate
+name: GusKernel GKI A12-5.10 Ultimate Builder
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
-          # Fix untuk error "ld doesn't exist" pada host kompilasi (Baseband Guard)
+          # Fix linker untuk Baseband Guard host tools
           sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
 
       - name: Setup Repo Tool
@@ -95,17 +95,24 @@ jobs:
             patch -p1 < base.c.patch || true
           fi
 
-      # --- 3. INJECT DEFCONFIG & BYPASS VERIFICATION ---
-      - name: Configure Defconfig
+      # --- 3. INJECT DEFCONFIG & FORCE BYPASS ---
+      - name: Configure Defconfig & Bypass
         run: |
           cd kernel-workspace/common
           
-          echo "Bypassing GKI defconfig check..."
-          # Mematikan check_defconfig dengan mengosongkan POST_DEFCONFIG_CMDS
-          echo "POST_DEFCONFIG_CMDS=\"\"" >> ../build.config.gki.aarch64
+          echo "Bypassing GKI check_defconfig in all build.configs..."
+          # Menonaktifkan pengecekan defconfig secara brutal di semua file build.config
+          find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+          find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_defconfig//g' {} +
 
-          echo "Injecting mandatory and custom configs..."
+          echo "Injecting Custom Name and Security Configs..."
+          sed -i '/CONFIG_LOCALVERSION/d' arch/arm64/configs/gki_defconfig
+
           cat <<EOF >> arch/arm64/configs/gki_defconfig
+          # Kernel Branding
+          CONFIG_LOCALVERSION="-GusKernel"
+          CONFIG_LOCALVERSION_AUTO=n
+
           # Mandatory for WildKSU
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
@@ -130,6 +137,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd kernel-workspace
+          # Menjalankan build resmi GKI
           BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       # --- 5. ANYKERNEL3 PACKAGING ---
@@ -144,10 +152,11 @@ jobs:
           fi
           
           cd AnyKernel3
-          zip -r9 "../GKI-Kernel-A12-5.10-Final.zip" * -x .git README.md
+          sed -i 's/kernel.string=.*/kernel.string=GusKernel for Android 12-5.10/g' banner
+          zip -r9 "../GusKernel-A12-5.10-Final.zip" * -x .git README.md
 
-      - name: Upload Flashable Kernel
+      - name: Upload Final Build
         uses: actions/upload-artifact@v4
         with:
-          name: Flashable-GKI-Kernel
-          path: GKI-Kernel-A12-5.10-Final.zip
+          name: GusKernel-A12-5.10
+          path: GusKernel-A12-5.10-Final.zip
