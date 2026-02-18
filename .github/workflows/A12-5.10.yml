@@ -1,0 +1,84 @@
+name: Android 12-5.10 Kernel Builder
+
+on:
+  workflow_dispatch: # Trigger manual dari GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Timeout diset agak lama karena repo sync kernel cukup memakan waktu
+    timeout-minutes: 360 
+
+    steps:
+      # 1. Checkout repository workflow kamu
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Pembersihan Disk (Sangat Penting untuk Kernel Android)
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+
+      # 3. Install Dependencies & Repo Tool
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev \
+          clang lld llvm git-lfs python3 curl
+          
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+
+      # 4. Konfigurasi Git (Wajib untuk Repo Init)
+      - name: Configure Git
+        run: |
+          git config --global user.email "build@kernel.resmi"
+          git config --global user.name "KernelBuilder"
+          git config --global color.ui false
+
+      # 5. Repo Init & Sync (Sesuai parameter yang kamu minta)
+      - name: Repo Init and Sync
+        run: |
+          mkdir kernel-workspace
+          cd kernel-workspace
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+      # 6. Bagian Patching (Tempat kamu menaruh patch agar tidak bootloop)
+      - name: Apply Custom Patches
+        run: |
+          cd kernel-workspace/common
+          echo "Memulai proses patching..."
+          # Contoh cara apply patch (uncomment jika sudah ada file .patch):
+          # git am < ../../patches/fix-bootloop.patch
+          echo "Patching selesai (atau dilewati)."
+
+      # 7. Proses Build menggunakan build.sh (Cara Resmi GKI)
+      - name: Build Kernel
+        run: |
+          cd kernel-workspace
+          # Menggunakan config standar GKI aarch64
+          # build.sh secara otomatis akan menggunakan toolchain dari folder prebuilts
+          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      # 8. Upload Hasil Build
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GKI-Kernel-5.10
+          path: |
+            kernel-workspace/out/android12-5.10/dist/Image
+            kernel-workspace/out/android12-5.10/dist/*.ko
+            kernel-workspace/out/android12-5.10/dist/abi_symbollist
