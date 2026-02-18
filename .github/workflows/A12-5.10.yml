@@ -1,4 +1,4 @@
-name: GKI Android 12-5.10 Ultimate Builder
+name: GKI Android 12-5.10 Ultimate
 
 on:
   workflow_dispatch:
@@ -34,6 +34,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
+          # Fix untuk error "ld doesn't exist" pada host kompilasi (Baseband Guard)
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
 
       - name: Setup Repo Tool
         run: |
@@ -81,7 +83,6 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
           
-          # WildKernels Fixes
           if [ "$SUBLEVEL" -le 209 ]; then
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
@@ -94,39 +95,50 @@ jobs:
             patch -p1 < base.c.patch || true
           fi
 
-          # --- INJECT DEFCONFIG FRAGMENTS ---
-          echo "Injecting custom configurations into gki_defconfig..."
+      # --- 3. INJECT DEFCONFIG & BYPASS VERIFICATION ---
+      - name: Configure Defconfig
+        run: |
+          cd kernel-workspace/common
+          
+          echo "Bypassing GKI defconfig check..."
+          # Mematikan check_defconfig dengan mengosongkan POST_DEFCONFIG_CMDS
+          echo "POST_DEFCONFIG_CMDS=\"\"" >> ../build.config.gki.aarch64
+
+          echo "Injecting mandatory and custom configs..."
           cat <<EOF >> arch/arm64/configs/gki_defconfig
-          # KernelSU Configuration
+          # Mandatory for WildKSU
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+
+          # KernelSU & SUSFS
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
+          CONFIG_SUSFS=y
+
+          # BBG & Security
           CONFIG_BBG=y
 
-          # KPatch Next Support
+          # KPatch & Mountify Support
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
-
-          # Mountify Support
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          echo "✓ Defconfig updated."
 
-      # --- 3. BUILD ---
+      # --- 4. BUILD ---
       - name: Build Kernel
         run: |
           cd kernel-workspace
           BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
-      # --- 4. ANYKERNEL3 PACKAGING ---
+      # --- 5. ANYKERNEL3 PACKAGING ---
       - name: Prepare AnyKernel3
         run: |
           git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
           
           if [ -f "kernel-workspace/out/android12-5.10/dist/Image" ]; then
             cp "kernel-workspace/out/android12-5.10/dist/Image" "AnyKernel3/Image"
-          elif [ -f "kernel-workspace/bazel-bin/common/kernel_aarch64/Image" ]; then
-            cp "kernel-workspace/bazel-bin/common/kernel_aarch64/Image" "AnyKernel3/Image"
           else
             echo "Error: Image file not found!" && exit 1
           fi
