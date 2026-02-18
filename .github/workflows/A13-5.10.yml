@@ -50,7 +50,7 @@ jobs:
           mkdir kernel-workspace
           cd kernel-workspace
           # Menggunakan Android 12-5.10 sebagai default, tapi logic build di bawah support versi lebih baru
-          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.10 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
       - name: Setup Wild KSU & BBG
@@ -67,7 +67,7 @@ jobs:
       - name: Integrate SUSFS & Fixes
         run: |
           cd kernel-workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs_src
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.10 susfs_src
           git clone https://github.com/WildKernels/kernel_patches.git wild_patches
           
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
@@ -75,10 +75,10 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
+          patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.10.patch || true
           
           if [ "$SUBLEVEL" -le 209 ]; then sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c; fi
-          if [ "$SUBLEVEL" -le 117 ]; then cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a12-5.10/fdinfo.c.patch ./ && patch -p1 < fdinfo.c.patch || true; fi
+          if [ "$SUBLEVEL" -le 117 ]; then cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a13-5.10/fdinfo.c.patch ./ && patch -p1 < fdinfo.c.patch || true; fi
 
       - name: Prepare Config Fragments
         run: |
