@@ -49,7 +49,7 @@ jobs:
         run: |
           mkdir kernel-workspace
           cd kernel-workspace
-          # Menggunakan Android 12-5.10 sebagai default, tapi logic build di bawah support versi lebih baru
+          # Menggunakan Android 13-5.10 sebagai default, tapi logic build di bawah support versi lebih baru
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.10 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
