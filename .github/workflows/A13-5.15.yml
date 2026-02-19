@@ -108,36 +108,66 @@ jobs:
           cd kernel-workspace
           set -ex
 
-          # 1. Pastikan LLD terinstal dan buat symlink di sistem
+          # 1. PERSIAPAN TOOLCHAIN & LINKER FIX
+          # Memastikan lld terinstal dan membuat symlink di sistem
           sudo apt-get update && sudo apt-get install -y lld clang
           sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
 
-          # 2. FIX UTAMA: Injeksi symlink ke dalam internal toolchain GKI
-          # GKI build.sh mengisolasi PATH ke folder ini, kita harus taruh 'ld' di sini.
-          GKI_TOOLCHAIN_PATH="build/kernel/build-tools/path/linux-x86"
-          mkdir -p $GKI_TOOLCHAIN_PATH
-          ln -sf $(which ld.lld) $GKI_TOOLCHAIN_PATH/ld
+          # 2. FIX UTAMA: Injeksi symlink ke toolchain internal GKI
+          # GKI build.sh mengisolasi PATH ke folder ini, kita 'paksa' ld masuk ke sana.
+          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
+          mkdir -p "$GKI_BIN_PATH"
+          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
         
           echo "========================================"
-          # Bersihkan output make agar log tidak berantakan
-          KERNEL_VER=$(make -C common kernelversion | grep -v "Entering" | grep -v "Leaving" || true)
+          # Ambil versi kernel tanpa pesan "Entering/Leaving directory"
+          KERNEL_VER=$(make -s -C common kernelversion)
           echo " Compiling Kernel Version: $KERNEL_VER"
           echo "========================================"
         
-          # 3. Bypass check_defconfig
+          # 3. CONFIGURATION BYPASS
+          # Mematikan check_defconfig agar tidak error saat menggunakan kustom fragment
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
 
-          # 4. Eksekusi Build dengan Environment tambahan
+          # 4. SET ENVIRONMENT VARIABLES
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export SKIP_DEFCONFIG_VALIDATION=1
 
+          # 5. EKSEKUSI BUILD
           if [ -f "build/build.sh" ]; then
-          echo "Using Traditional build.sh"
-          # Tambahkan SKIP_DEFCONFIG_VALIDATION untuk menghindari error fragment
-          SKIP_DEFCONFIG_VALIDATION=1 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          echo "Status: Menggunakan Traditional build.sh"
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
-          echo "Using Bazel Build System"
-          tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
-        fi
+          echo "Status: Menggunakan Bazel Build System"
+          tools/bazel build --config=fast --lto=thin \
+            --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
+            //common:kernel_aarch64_dist || exit 1
+          fi 
+        
+      - name: Prepare AnyKernel3 Packaging
+        run: |
+          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+          # Cek lokasi output (Bazel dan build.sh punya lokasi berbeda)
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+             IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
+          fi
+          
+          if [ -f "$IMAGE_PATH" ]; then
+            cp "$IMAGE_PATH" AnyKernel3/Image
+          else
+            echo "Error: Image not found!" && exit 1
+          fi
+          
+          cd AnyKernel3
+          sed -i 's/kernel.string=.*/kernel.string=GusKernel Hybrid/g' banner
+          zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+
+      - name: Upload Final Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
