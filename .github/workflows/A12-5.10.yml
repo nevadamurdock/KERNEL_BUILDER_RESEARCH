@@ -1,4 +1,4 @@
-name: GusKernel GKI Ultimate (Hybrid Build System)
+name: GusKernel GKI Ultimate A12-5.10 (Hybrid Build System)
 
 on:
   workflow_dispatch:
