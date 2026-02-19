@@ -142,7 +142,7 @@ jobs:
           tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
         fi
         
-         - name: Prepare AnyKernel3 Packaging
+        - name: Prepare AnyKernel3 Packaging
         run: |
           git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
           # Cek lokasi output (Bazel dan build.sh punya lokasi berbeda)
@@ -161,8 +161,8 @@ jobs:
           sed -i 's/kernel.string=.*/kernel.string=GusKernel Hybrid/g' banner
           zip -r9 "../GusKernel-Final.zip" * -x .git README.md
 
-         - name: Upload Final Build
-            uses: actions/upload-artifact@v4
-             with:
-             name: GusKernel-Flashable
-            path: GusKernel-Final.zip
+        - name: Upload Final Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
