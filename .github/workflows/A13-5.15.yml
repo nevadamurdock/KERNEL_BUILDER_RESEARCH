@@ -107,20 +107,56 @@ jobs:
         run: |
           cd kernel-workspace
           set -ex
+
+          # 1. PRE-BUILD FIXES (Penting untuk Baseband-guard & Linker)
+          # Membuat symlink agar clang menemukan linker 'ld'
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
+
+          # Sinkronisasi CONFIG_LSM untuk Baseband-guard agar build tidak Abort (Error 2)
+          DEFCONFIG="common/arch/arm64/configs/gki_defconfig"
+          if [ -f "$DEFCONFIG" ]; then
+            echo "Optimizing $DEFCONFIG for Baseband-guard & GusKernel..."
+            # Pastikan baseband_guard ada di urutan pertama LSM
+            sed -i '/CONFIG_LSM/d' "$DEFCONFIG"
+            echo 'CONFIG_LSM="baseband_guard,lockdown,yama,loadpin,safesetid,selinux,integrity,apparmor"' >> "$DEFCONFIG"
+            
+            # Pastikan CONFIG_BBG aktif
+            sed -i '/CONFIG_BBG/d' "$DEFCONFIG"
+            echo "CONFIG_BBG=y" >> "$DEFCONFIG"
+
+            # Matikan Localversion Auto agar nama kernel bersih (Tanpa + atau -dirty)
+            sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG"
+            echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG"
+            
+            # Matikan IKHEADERS untuk mencegah Exit Code 2 pada CC kernel/configs.o
+            sed -i '/CONFIG_IKHEADERS/d' "$DEFCONFIG"
+            echo "CONFIG_IKHEADERS=n" >> "$DEFCONFIG"
+          fi
+
           echo "========================================"
           echo " Compiling Kernel Version: $(make -C common kernelversion)"
           echo "========================================"
           
-          # Matikan check_defconfig bypass
+          # 2. BYPASS DEFCONFIG CHECK
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+
+          # 3. EXECUTE BUILD
+          # Export variabel global agar terbaca oleh build.sh
+          export LTO=thin
+          export SKIP_DEFCONFIG_VALIDATION=1
 
           if [ -f "build/build.sh" ]; then
             echo "Using Traditional build.sh"
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+            # Sertakan GKI_DEFCONFIG_FRAGMENT jika kamu menggunakan fragment untuk Wild
+            GKI_DEFCONFIG_FRAGMENT="common/arch/arm64/configs/wild_gki.fragment" \
+            BUILD_CONFIG=common/build.config.gki.aarch64 \
+            build/build.sh
           else
             echo "Using Bazel Build System"
-            # Logic untuk Android 14/13 jika kamu ganti branch nanti
-            tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
+            # Selalu gunakan --lto=thin agar Wi-Fi/BT tidak rusak (Jangan gunakan none)
+            tools/bazel build --config=fast --lto=thin \
+            --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
+            //common:kernel_aarch64_dist || exit 1
           fi
 
       - name: Prepare AnyKernel3 Packaging
