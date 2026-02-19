@@ -76,9 +76,18 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          if [ "$SUBLEVEL" -le 209 ]; then sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c; fi
-          if [ "$SUBLEVEL" -le 117 ]; then cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a13-5.15/fdinfo.c.patch ./ && patch -p1 < fdinfo.c.patch || true; fi
-
+          # Fix error: unused label 'show_pad'
+          # Kita ubah 'goto show_pad' menjadi 'return 0' DAN hapus label 'show_pad:' agar tidak unused
+          if [ "$SUBLEVEL" -le 209 ]; then 
+            sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
+            sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
+          fi
+          
+          if [ "$SUBLEVEL" -le 117 ]; then 
+            cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a13-5.15/fdinfo.c.patch ./ 
+            patch -p1 < fdinfo.c.patch || true
+          fi
+          
       - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
