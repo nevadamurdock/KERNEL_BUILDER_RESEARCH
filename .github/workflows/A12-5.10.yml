@@ -86,7 +86,7 @@ jobs:
           # Buat fragment untuk Bazel build (wild_gki.fragment)
           mkdir -p arch/arm64/configs/
           cat <<EOF > arch/arm64/configs/wild_gki.fragment
-          CONFIG_LOCALVERSION="-ThingsFlasher"
+          CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
