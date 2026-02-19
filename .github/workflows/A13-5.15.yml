@@ -49,7 +49,6 @@ jobs:
         run: |
           mkdir kernel-workspace
           cd kernel-workspace
-          # Menggunakan Android 13-5.15 sebagai default, tapi logic build di bawah support versi lebih baru
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
@@ -83,7 +82,6 @@ jobs:
       - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
-          # Buat fragment untuk Bazel build (wild_gki.fragment)
           mkdir -p arch/arm64/configs/
           cat <<EOF > arch/arm64/configs/wild_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
@@ -100,52 +98,61 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          # Tambahkan juga ke gki_defconfig lama untuk build.sh
           cat arch/arm64/configs/wild_gki.fragment >> arch/arm64/configs/gki_defconfig
 
       - name: Build Kernel (Hybrid Logic)
         run: |
-        cd kernel-workspace
-        set -ex
+          cd kernel-workspace
+          set -ex
 
-        # --- PRE-BUILD FIXES ---
-        # 1. Pastikan lld tersedia dan buat symlink sistem
-        sudo apt-get update && sudo apt-get install -y lld clang
-        sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
+          # Fix 'ld' missing: Injeksi symlink ke toolchain internal GKI
+          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
+          mkdir -p "$GKI_BIN_PATH"
+          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-        # 2. Fix 'ld' missing: Injeksi symlink ke toolchain internal GKI
-        # GKI build.sh sering mengisolasi PATH, jadi kita buatkan 'ld' di sana.
-        GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
-        mkdir -p "$GKI_BIN_PATH"
-        ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
+          echo "========================================"
+          KERNEL_VER=$(make -s -C common kernelversion)
+          echo " Compiling Kernel Version: $KERNEL_VER"
+          echo "========================================"
+          
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
 
-        echo "========================================"
-        # Ambil versi kernel (tanpa log directory yang berisik)
-        KERNEL_VER=$(make -s -C common kernelversion)
-        echo " Compiling Kernel Version: $KERNEL_VER"
-        echo "========================================"
-        
-        # 3. Matikan check_defconfig bypass (agar tidak error pada custom config)
-        find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+          export LLVM=1
+          export LD=ld.lld
+          export HOSTLD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export SKIP_DEFCONFIG_VALIDATION=1
 
-        # 4. Set Environment Variables untuk LLVM & Linker
-        export LLVM=1
-        export LD=ld.lld
-        export HOSTLD=ld.lld
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export SKIP_DEFCONFIG_VALIDATION=1
+          if [ -f "build/build.sh" ]; then
+            echo "Using Traditional build.sh"
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          else
+            echo "Using Bazel Build System"
+            tools/bazel build --config=fast --lto=thin \
+              --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
+              //common:kernel_aarch64_dist || exit 1
+          fi
 
-        # --- EXECUTE BUILD ---
-        if [ -f "build/build.sh" ]; then
-          echo "Using Traditional build.sh"
-          # Menjalankan build.sh dengan konfigurasi yang diinginkan
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
-        else
-          echo "Using Bazel Build System"
-          # Logic untuk Android 14/13 jika kamu ganti branch nanti
-          tools/bazel build --config=fast --lto=thin \
-            --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
-            //common:kernel_aarch64_dist || exit 1
-        fi
+      - name: Prepare AnyKernel3 Packaging
+        run: |
+          # Cari lokasi Image (mendukung out/ build.sh atau bazel-bin)
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+              IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
+          fi
+          
+          if [ -f "$IMAGE_PATH" ]; then
+            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+            cp "$IMAGE_PATH" AnyKernel3/Image
+            cd AnyKernel3
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel Hybrid/g' banner
+            zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+          else
+            echo "Error: Image not found! Build failed." && exit 1
+          fi
 
-        
+      - name: Upload Final Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
