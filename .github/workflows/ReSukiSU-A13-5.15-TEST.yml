@@ -84,12 +84,9 @@ jobs:
         run: |
           cd kernel-workspace/common
           
-          # 1. Buat Fragment GusKernel
           cat <<EOF > arch/arm64/configs/gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
-
-          # Advanced TCP Congestion
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_WESTWOOD=y
@@ -102,16 +99,10 @@ jobs:
           CONFIG_TCP_CONG_VENO=y
           CONFIG_TCP_CONG_YEAH=y
           CONFIG_TCP_CONG_ILLINOIS=y
-          
-          # Network Scheduler for BBR
           CONFIG_NET_SCH_FQ=y
           CONFIG_NET_SCH_FQ_CODEL=y
-          
-          # Default Setting
           CONFIG_DEFAULT_BBR=y
           CONFIG_DEFAULT_TCP_CONG="bbr"
-
-          # KSU & SUSFS & BBG
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
@@ -126,18 +117,18 @@ jobs:
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
           
-          # 2. Merge fragment ke defconfig utama
           cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-          # 3. Trik Paksa via build.config (Mencegah Google menimpa balik)
-          echo "prepend_cmd POST_DEFCONFIG_CMDS update_config" >> build.config.gki.aarch64
-          echo "function update_config() {
-            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_ADVANCED
-            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_BBR
-            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e NET_SCH_FQ
-            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_WESTWOOD
-            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config --set-str DEFAULT_TCP_CONG \"bbr\"
-          }" >> build.config.gki.aarch64
+          # Injection manual ke build.config (Fix Error 127)
+          echo '
+          function update_tcp_config() {
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e TCP_CONG_ADVANCED
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e TCP_CONG_BBR
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e NET_SCH_FQ
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config --set-str DEFAULT_TCP_CONG "bbr"
+          }
+          POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} update_tcp_config"
+          ' >> build.config.gki.aarch64
 
       - name: Build Kernel (Hybrid Logic)
         run: |
@@ -148,7 +139,7 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # Kill Defconfig Validation
+          # Trik Bypass validasi defconfig (Hanya memberikan komentar pada perintah lama)
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
 
           export LLVM=1
