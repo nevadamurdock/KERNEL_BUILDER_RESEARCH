@@ -50,14 +50,18 @@ jobs:
       - name: Setup ReSukiSU & Manual Hook
         run: |
           cd kernel-workspace
-          # 1. Setup ReSukiSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # 2. Manual Integration Hook
+          # Pindahkan folder ke lokasi drivers
+          if [ -d "KernelSU" ]; then
+            mv KernelSU common/drivers/resukisu
+          elif [ -d "resukisu" ]; then
+            mv resukisu common/drivers/resukisu
+          fi
+
           echo 'source "drivers/resukisu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += resukisu/' >> common/drivers/Makefile
 
-          # 3. Setup Baseband Guard (BBG)
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -73,7 +77,6 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Fix error: unused label 'show_pad' (Manual fix via sed)
           if [ "$SUBLEVEL" -le 209 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
@@ -132,7 +135,6 @@ jobs:
           fi
           
           if [ -f "$IMAGE_PATH" ]; then
-            # Menggunakan AnyKernel3 (Repo ini tetap digunakan sebagai tool packaging)
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
