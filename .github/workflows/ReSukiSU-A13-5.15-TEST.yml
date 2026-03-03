@@ -50,26 +50,16 @@ jobs:
       - name: Setup ReSukiSU & Manual Hook
         run: |
           cd kernel-workspace
-          # 1. Jalankan setup script ReSukiSU
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
-          
-          # 2. Fix Lokasi: Pindahkan folder ke 'kernelsu' di dalam drivers
-          # Ini memperbaiki error "No such file or directory" pada Makefile
-          if [ -d "KernelSU" ]; then
-            mv KernelSU common/drivers/kernelsu
-          elif [ -d "resukisu" ]; then
-            mv resukisu common/drivers/kernelsu
-          fi
+          # Langsung clone ke direktori tujuan (Fix Error 500 Bypass)
+          git clone https://github.com/ReSukiSU/ReSukiSU.git common/drivers/kernelsu --depth=1
 
-          # 3. Manual Integration Hook
-          # Membersihkan baris lama jika ada untuk mencegah duplikasi
+          # Integrasi Manual
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
-          
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
-          # 4. Setup Baseband Guard (BBG)
+          # Setup Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -83,10 +73,8 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          # Patch SUSFS ke core kernel
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Fix error kompilasi show_pad
           if [ "$SUBLEVEL" -le 209 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
