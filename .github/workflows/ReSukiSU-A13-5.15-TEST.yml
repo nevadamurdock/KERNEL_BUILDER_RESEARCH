@@ -80,19 +80,17 @@ jobs:
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
           
-      - name: Prepare Config Fragments & TCP Fix
+      - name: Prepare Config Fragments & TCP Advanced Fix
         run: |
           cd kernel-workspace/common
           
-          # Hapus setting TCP bawaan agar tidak konflik
-          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-
+          # 1. Buat Fragment GusKernel
           cat <<EOF > arch/arm64/configs/gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
-          
-          # TCP Congestion Control (Forced Built-in)
+
+          # Advanced TCP Congestion
+          CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_WESTWOOD=y
           CONFIG_TCP_CONG_HTCP=y
@@ -104,6 +102,12 @@ jobs:
           CONFIG_TCP_CONG_VENO=y
           CONFIG_TCP_CONG_YEAH=y
           CONFIG_TCP_CONG_ILLINOIS=y
+          
+          # Network Scheduler for BBR
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_NET_SCH_FQ_CODEL=y
+          
+          # Default Setting
           CONFIG_DEFAULT_BBR=y
           CONFIG_DEFAULT_TCP_CONG="bbr"
 
@@ -121,7 +125,19 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
+          
+          # 2. Merge fragment ke defconfig utama
           cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
+
+          # 3. Trik Paksa via build.config (Mencegah Google menimpa balik)
+          echo "prepend_cmd POST_DEFCONFIG_CMDS update_config" >> build.config.gki.aarch64
+          echo "function update_config() {
+            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_ADVANCED
+            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_BBR
+            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e NET_SCH_FQ
+            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config -e TCP_CONG_WESTWOOD
+            \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config --set-str DEFAULT_TCP_CONG \"bbr\"
+          }" >> build.config.gki.aarch64
 
       - name: Build Kernel (Hybrid Logic)
         run: |
