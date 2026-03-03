@@ -1,0 +1,158 @@
+name: GusKernel GKI Ultimate A13-5.15 (ReSukiSU Hybrid)
+
+on:
+  workflow_dispatch:
+
+env:
+  SUSFS_VERSION: "2.0.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
+
+    steps:
+      - name: Checkout Workflow
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_tool_cache: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
+
+      - name: Setup Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+          git config --global user.email "build@kernel.resmi"
+          git config --global user.name "KernelBuilder"
+
+      - name: Repo Init & Sync
+        run: |
+          mkdir kernel-workspace
+          cd kernel-workspace
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15 --depth=1
+          repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+      - name: Setup ReSukiSU & Manual Hook
+        run: |
+          cd kernel-workspace
+          # 1. Jalankan setup script ReSukiSU
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          
+          # 2. Manual Integration Hook (Sesuai manual guide)
+          # Menggunakan path 'common/' karena GKI repo menyimpannya di sana
+          echo 'source "drivers/resukisu/Kconfig"' >> common/drivers/Kconfig
+          echo 'obj-y += resukisu/' >> common/drivers/Makefile
+
+          # 3. Setup Baseband Guard (BBG)
+          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+
+      - name: Integrate SUSFS & Fixes
+        run: |
+          cd kernel-workspace
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
+          git clone https://github.com/WildKernels/kernel_patches.git wild_patches
+          
+          SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
+          cp -r susfs_src/kernel_patches/fs/* common/fs/
+          cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
+          
+          cd common
+          patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
+          
+          # Fix error: unused label 'show_pad'
+          if [ "$SUBLEVEL" -le 209 ]; then 
+            sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
+            sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
+          fi
+          
+          if [ "$SUBLEVEL" -le 117 ]; then 
+            cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a13-5.15/fdinfo.c.patch ./ 
+            patch -p1 < fdinfo.c.patch || true
+          fi
+          
+      - name: Prepare Config Fragments
+        run: |
+          cd kernel-workspace/common
+          mkdir -p arch/arm64/configs/
+          cat <<EOF > arch/arm64/configs/wild_gki.fragment
+          CONFIG_LOCALVERSION="-GusKernel"
+          CONFIG_LOCALVERSION_AUTO=n
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_SUSFS=y
+          CONFIG_BBG=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          EOF
+          cat arch/arm64/configs/wild_gki.fragment >> arch/arm64/configs/gki_defconfig
+
+      - name: Build Kernel (Hybrid Logic)
+        run: |
+          cd kernel-workspace
+          set -ex
+
+          # Fix 'ld' missing
+          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
+          mkdir -p "$GKI_BIN_PATH"
+          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
+
+          export LLVM=1
+          export LD=ld.lld
+          export HOSTLD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export SKIP_DEFCONFIG_VALIDATION=1
+
+          if [ -f "build/build.sh" ]; then
+            echo "Using Traditional build.sh"
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          else
+            echo "Using Bazel Build System"
+            tools/bazel build --config=fast --lto=thin \
+              --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
+              //common:kernel_aarch64_dist || exit 1
+          fi
+
+      - name: Prepare AnyKernel3 Packaging
+        run: |
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+              IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
+          fi
+          
+          if [ -f "$IMAGE_PATH" ]; then
+            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+            cp "$IMAGE_PATH" AnyKernel3/Image
+            cd AnyKernel3
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU/g' banner
+            zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+          else
+            echo "Error: Image not found! Build failed." && exit 1
+          fi
+
+      - name: Upload Final Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
