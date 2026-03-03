@@ -47,20 +47,25 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
-      - name: Setup ReSukiSU (Robust Method)
+      - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
-          # 1. Hapus integrasi lama jika ada untuk mencegah error
+          # 1. Jalankan script otomatis sesuai permintaanmu
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          
+          # 2. Hubungkan hasil download ke folder drivers GKI
+          # Kita buat link agar folder KernelSU atau resukisu terbaca sebagai common/drivers/kernelsu
+          if [ -d "KernelSU" ]; then
+            ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
+          elif [ -d "resukisu" ]; then
+            ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
+          fi
+
+          # 3. Manual Hook agar masuk ke sistem build
+          # Hapus sisa-sisa lama agar tidak duplikat
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
-          rm -rf common/drivers/kernelsu
-
-          # 2. Clone langsung ke target folder
-          # Menggunakan alamat HTTPS yang lebih stabil
-          git clone https://github.com/ReSukiSU/ReSukiSU.git common/drivers/kernelsu --depth=1
-
-          # 3. Jalankan manual hook script bawaan ReSukiSU (jika ada) atau buat manual
-          # Sesuai panduan: https://resukisu.github.io/guide/manual-integrate.html
+          
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
@@ -80,7 +85,6 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Fix error kompilasi show_pad
           if [ "$SUBLEVEL" -le 209 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
@@ -113,7 +117,6 @@ jobs:
           cd kernel-workspace
           set -ex
 
-          # Inject symlink ld
           GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
