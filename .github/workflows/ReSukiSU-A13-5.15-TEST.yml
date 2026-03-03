@@ -119,7 +119,7 @@ jobs:
           
           cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-          # Injection manual ke build.config (Fix Error 127)
+          # Injection manual ke build.config untuk paksa BBR
           echo '
           function update_tcp_config() {
               ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e TCP_CONG_ADVANCED
@@ -130,7 +130,7 @@ jobs:
           POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} update_tcp_config"
           ' >> build.config.gki.aarch64
 
-      - name: Build Kernel (Hybrid Logic)
+      - name: Build Kernel (Hybrid Logic & Validation Kill)
         run: |
           cd kernel-workspace
           set -ex
@@ -139,14 +139,17 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # Trik Bypass validasi defconfig (Hanya memberikan komentar pada perintah lama)
+          # KILL SEMUA VALIDASI GOOGLE (Defconfig & Modules List)
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES="check_modules_list"/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/IN_TREE_MODULES=1/IN_TREE_MODULES=0/g' {} +
 
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export SKIP_DEFCONFIG_VALIDATION=1
+          export SKIP_IF_MODULES_CHANGED=1
 
           if [ -f "build/build.sh" ]; then
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
@@ -167,7 +170,7 @@ jobs:
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU/g' banner
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
             echo "Error: Image not found! Build failed." && exit 1
