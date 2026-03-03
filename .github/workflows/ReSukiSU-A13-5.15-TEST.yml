@@ -50,11 +50,10 @@ jobs:
       - name: Setup ReSukiSU & Manual Hook
         run: |
           cd kernel-workspace
-          # 1. Jalankan setup script ReSukiSU
+          # 1. Setup ReSukiSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # 2. Manual Integration Hook (Sesuai manual guide)
-          # Menggunakan path 'common/' karena GKI repo menyimpannya di sana
+          # 2. Manual Integration Hook
           echo 'source "drivers/resukisu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += resukisu/' >> common/drivers/Makefile
 
@@ -66,7 +65,6 @@ jobs:
         run: |
           cd kernel-workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
-          git clone https://github.com/WildKernels/kernel_patches.git wild_patches
           
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
           cp -r susfs_src/kernel_patches/fs/* common/fs/
@@ -75,22 +73,17 @@ jobs:
           cd common
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Fix error: unused label 'show_pad'
+          # Fix error: unused label 'show_pad' (Manual fix via sed)
           if [ "$SUBLEVEL" -le 209 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
-          fi
-          
-          if [ "$SUBLEVEL" -le 117 ]; then 
-            cp ../wild_patches/ksu/susfs_fix_patches/v${{ env.SUSFS_VERSION }}/a13-5.15/fdinfo.c.patch ./ 
-            patch -p1 < fdinfo.c.patch || true
           fi
           
       - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
           mkdir -p arch/arm64/configs/
-          cat <<EOF > arch/arm64/configs/wild_gki.fragment
+          cat <<EOF > arch/arm64/configs/gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_KPROBES=y
@@ -106,14 +99,13 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          cat arch/arm64/configs/wild_gki.fragment >> arch/arm64/configs/gki_defconfig
+          cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
       - name: Build Kernel (Hybrid Logic)
         run: |
           cd kernel-workspace
           set -ex
 
-          # Fix 'ld' missing
           GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
@@ -125,12 +117,10 @@ jobs:
           export SKIP_DEFCONFIG_VALIDATION=1
 
           if [ -f "build/build.sh" ]; then
-            echo "Using Traditional build.sh"
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
-            echo "Using Bazel Build System"
             tools/bazel build --config=fast --lto=thin \
-              --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment \
+              --defconfig_fragment=//common:arch/arm64/configs/gus_gki.fragment \
               //common:kernel_aarch64_dist || exit 1
           fi
 
@@ -142,6 +132,7 @@ jobs:
           fi
           
           if [ -f "$IMAGE_PATH" ]; then
+            # Menggunakan AnyKernel3 (Repo ini tetap digunakan sebagai tool packaging)
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
