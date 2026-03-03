@@ -21,9 +21,6 @@ jobs:
           remove_android: true
           remove_dotnet: true
           remove_tool_cache: true
-          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-          rm_cmd: "rmz"
-          rmz_version: "3.1.1"
 
       - name: Install Dependencies
         run: |
@@ -83,15 +80,19 @@ jobs:
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
           
-      - name: Prepare Config Fragments (Inc. TCP Congestion)
+      - name: Prepare Config Fragments & TCP Fix
         run: |
           cd kernel-workspace/common
-          mkdir -p arch/arm64/configs/
+          
+          # Hapus setting TCP bawaan agar tidak konflik
+          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+
           cat <<EOF > arch/arm64/configs/gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           
-          # TCP Congestion Control
+          # TCP Congestion Control (Forced Built-in)
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_WESTWOOD=y
           CONFIG_TCP_CONG_HTCP=y
@@ -131,11 +132,6 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          echo "========================================"
-          KERNEL_VER=$(make -s -C common kernelversion)
-          echo " Compiling Kernel Version: $KERNEL_VER"
-          echo "========================================"
-          
           # Kill Defconfig Validation
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
 
@@ -146,10 +142,8 @@ jobs:
           export SKIP_DEFCONFIG_VALIDATION=1
 
           if [ -f "build/build.sh" ]; then
-            echo "Using Traditional build.sh"
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
-            echo "Using Bazel Build System"
             tools/bazel build --config=fast --lto=thin \
               --defconfig_fragment=//common:arch/arm64/configs/gus_gki.fragment \
               //common:kernel_aarch64_dist || exit 1
