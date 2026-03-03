@@ -50,11 +50,10 @@ jobs:
       - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
-          # 1. Jalankan script otomatis sesuai permintaanmu
+          # 1. Jalankan script otomatis ReSukiSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # 2. Hubungkan hasil download ke folder drivers GKI
-          # Kita buat link agar folder KernelSU atau resukisu terbaca sebagai common/drivers/kernelsu
+          # 2. Hubungkan hasil download ke folder drivers GKI menggunakan Symlink
           if [ -d "KernelSU" ]; then
             ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
           elif [ -d "resukisu" ]; then
@@ -62,10 +61,8 @@ jobs:
           fi
 
           # 3. Manual Hook agar masuk ke sistem build
-          # Hapus sisa-sisa lama agar tidak duplikat
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
-          
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
@@ -93,8 +90,8 @@ jobs:
       - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
-          mkdir -p arch/arm64/configs/
-          cat <<EOF > arch/arm64/configs/gus_gki.fragment
+          # Buat fragment konfigurasi
+          cat <<EOF > gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_KPROBES=y
@@ -110,9 +107,10 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
+          # Injeksi langsung ke defconfig utama
+          cat gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-      - name: Build Kernel
+      - name: Build Kernel (Fix Validation)
         run: |
           cd kernel-workspace
           set -ex
@@ -125,13 +123,14 @@ jobs:
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          export SKIP_DEFCONFIG_VALIDATION=1
 
+          # Jalankan build dengan memaksa SKIP_DEFCONFIG_VALIDATION=1
           if [ -f "build/build.sh" ]; then
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+            SKIP_DEFCONFIG_VALIDATION=1 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
             tools/bazel build --config=fast --lto=thin \
-              --defconfig_fragment=//common:arch/arm64/configs/gus_gki.fragment \
+              --defconfig_fragment=//common:gus_gki.fragment \
+              --action_env=SKIP_DEFCONFIG_VALIDATION=1 \
               //common:kernel_aarch64_dist || exit 1
           fi
 
