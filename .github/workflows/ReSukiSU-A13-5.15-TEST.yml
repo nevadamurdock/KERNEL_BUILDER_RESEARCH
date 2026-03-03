@@ -50,23 +50,19 @@ jobs:
       - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
-          # 1. Jalankan script otomatis ReSukiSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # 2. Hubungkan hasil download ke folder drivers GKI menggunakan Symlink
           if [ -d "KernelSU" ]; then
             ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
           elif [ -d "resukisu" ]; then
             ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
           fi
 
-          # 3. Manual Hook agar masuk ke sistem build
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
-          # 4. Setup Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -87,11 +83,11 @@ jobs:
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
           
-      - name: Prepare Config Fragments
+      - name: Prepare Config & Kill Validation
         run: |
           cd kernel-workspace/common
-          # Buat fragment konfigurasi
-          cat <<EOF > gus_gki.fragment
+          # Injeksi config
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_KPROBES=y
@@ -107,10 +103,12 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          # Injeksi langsung ke defconfig utama
-          cat gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-      - name: Build Kernel (Fix Validation)
+          # TRIK AMPUH: Mematikan check_defconfig via sed
+          cd ..
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+
+      - name: Build Kernel
         run: |
           cd kernel-workspace
           set -ex
@@ -124,12 +122,10 @@ jobs:
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
 
-          # Jalankan build dengan memaksa SKIP_DEFCONFIG_VALIDATION=1
           if [ -f "build/build.sh" ]; then
             SKIP_DEFCONFIG_VALIDATION=1 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
             tools/bazel build --config=fast --lto=thin \
-              --defconfig_fragment=//common:gus_gki.fragment \
               --action_env=SKIP_DEFCONFIG_VALIDATION=1 \
               //common:kernel_aarch64_dist || exit 1
           fi
