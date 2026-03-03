@@ -83,13 +83,30 @@ jobs:
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
           
-      - name: Prepare Config & Kill Validation
+      - name: Prepare Config Fragments (Inc. TCP Congestion)
         run: |
           cd kernel-workspace/common
-          # Injeksi config
-          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          mkdir -p arch/arm64/configs/
+          cat <<EOF > arch/arm64/configs/gus_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
+          
+          # TCP Congestion Control
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_TCP_CONG_WESTWOOD=y
+          CONFIG_TCP_CONG_HTCP=y
+          CONFIG_TCP_CONG_HSTCP=y
+          CONFIG_TCP_CONG_HYBLA=y
+          CONFIG_TCP_CONG_VEGAS=y
+          CONFIG_TCP_CONG_SCALABLE=y
+          CONFIG_TCP_CONG_LP=y
+          CONFIG_TCP_CONG_VENO=y
+          CONFIG_TCP_CONG_YEAH=y
+          CONFIG_TCP_CONG_ILLINOIS=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_DEFAULT_TCP_CONG="bbr"
+
+          # KSU & SUSFS & BBG
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
@@ -103,12 +120,9 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
+          cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-          # TRIK AMPUH: Mematikan check_defconfig via sed
-          cd ..
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
-
-      - name: Build Kernel
+      - name: Build Kernel (Hybrid Logic)
         run: |
           cd kernel-workspace
           set -ex
@@ -117,16 +131,27 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
+          echo "========================================"
+          KERNEL_VER=$(make -s -C common kernelversion)
+          echo " Compiling Kernel Version: $KERNEL_VER"
+          echo "========================================"
+          
+          # Kill Defconfig Validation
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
+
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export SKIP_DEFCONFIG_VALIDATION=1
 
           if [ -f "build/build.sh" ]; then
-            SKIP_DEFCONFIG_VALIDATION=1 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+            echo "Using Traditional build.sh"
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
+            echo "Using Bazel Build System"
             tools/bazel build --config=fast --lto=thin \
-              --action_env=SKIP_DEFCONFIG_VALIDATION=1 \
+              --defconfig_fragment=//common:arch/arm64/configs/gus_gki.fragment \
               //common:kernel_aarch64_dist || exit 1
           fi
 
