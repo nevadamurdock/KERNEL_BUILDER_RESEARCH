@@ -94,6 +94,7 @@ jobs:
           # Masukkan SEMUA algoritma TCP yang tersedia di source
           cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_LOCALVERSION="-GusKernel"
+          CONFIG_LOCALVERSION_AUTO=n
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BIC=y
           CONFIG_TCP_CONG_WESTWOOD=y
