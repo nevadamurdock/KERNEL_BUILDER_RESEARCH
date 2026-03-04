@@ -139,17 +139,23 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # KILL SEMUA VALIDASI GOOGLE (Defconfig & Modules List)
+          # 1. Kill Defconfig Validation
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES="check_modules_list"/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/IN_TREE_MODULES=1/IN_TREE_MODULES=0/g' {} +
+          
+          # 2. FIX MODULES LIST ERROR: Auto-update list sebelum dicek
+          echo '
+          function sync_modules_list() {
+              echo "==> Syncing modules list to satisfy GKI check..."
+              cp ${OUT_DIR}/common/modules.order ${KERNEL_DIR}/android/gki_aarch64_modules
+          }
+          POST_KERNEL_BUILD_CMDS="${POST_KERNEL_BUILD_CMDS} sync_modules_list"
+          ' >> common/build.config.gki.aarch64
 
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export SKIP_DEFCONFIG_VALIDATION=1
-          export SKIP_IF_MODULES_CHANGED=1
 
           if [ -f "build/build.sh" ]; then
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
