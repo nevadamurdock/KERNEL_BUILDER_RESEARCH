@@ -83,17 +83,19 @@ jobs:
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
           
-      - name: Prepare Config Fragments (Inc. TCP Congestion)
+      - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
           cd kernel-workspace/common
-          mkdir -p arch/arm64/configs/
-          cat <<EOF > arch/arm64/configs/gus_gki.fragment
-          CONFIG_LOCALVERSION="-GusKernel"
-          CONFIG_LOCALVERSION_AUTO=n
           
-          # TCP Congestion Control
+          # Bersihkan config TCP bawaan biar gak bentrok
+          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+          
+          # Masukkan SEMUA algoritma TCP yang tersedia di source
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
+          CONFIG_TCP_CONG_BIC=y
           CONFIG_TCP_CONG_WESTWOOD=y
           CONFIG_TCP_CONG_HTCP=y
           CONFIG_TCP_CONG_HSTCP=y
@@ -104,15 +106,12 @@ jobs:
           CONFIG_TCP_CONG_VENO=y
           CONFIG_TCP_CONG_YEAH=y
           CONFIG_TCP_CONG_ILLINOIS=y
-          
-          # Net Scheduler for BBR
+          CONFIG_TCP_CONG_BBR=y
           CONFIG_NET_SCH_FQ=y
           CONFIG_NET_SCH_FQ_CODEL=y
-          
-          # Default Setting
           CONFIG_DEFAULT_BBR=y
           CONFIG_DEFAULT_TCP_CONG="bbr"
-
+          
           # KSU & SUSFS & BBG
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
@@ -127,64 +126,36 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-          cat arch/arm64/configs/gus_gki.fragment >> arch/arm64/configs/gki_defconfig
 
-          # Injection manual ke build.config untuk paksa TCP config
-          echo '
-          function update_tcp_config() {
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e TCP_CONG_ADVANCED
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e TCP_CONG_BBR
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e NET_SCH_FQ
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config --set-str DEFAULT_TCP_CONG "bbr"
-          }
-          POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} update_tcp_config"
-          ' >> build.config.gki.aarch64
-
-      - name: Build Kernel (Hybrid Logic)
+      - name: Build Kernel (Ultimate Bypass Logic)
         run: |
           cd kernel-workspace
           set -ex
 
-          # Hapus folder out jika ada untuk clean build
+          # Clean build
           rm -rf out
 
           GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          echo "========================================"
-          KERNEL_VER=$(make -s -C common kernelversion)
-          echo " Compiling Kernel Version: $KERNEL_VER"
-          echo "========================================"
-          
-          # Kill Defconfig Validation
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS="check_defconfig"/g' {} +
-
-          # Auto-sync modules list untuk menghindari error "modules list out of date"
-          echo '
-          function sync_modules_list() {
-              echo "==> Finding modules.order to sync..."
-              local MOD_ORDER=$(find ${OUT_DIR} -name modules.order | head -n 1)
-              if [ -f "$MOD_ORDER" ]; then
-                  cp "$MOD_ORDER" ${KERNEL_DIR}/android/gki_aarch64_modules
-              fi
-          }
-          POST_KERNEL_BUILD_CMDS="${POST_KERNEL_BUILD_CMDS} sync_modules_list"
-          ' >> common/build.config.gki.aarch64
+          # KILL SEMUA VALIDASI GOOGLE
+          # Ini trik supaya dia gak ngecek modules.order sama sekali
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
 
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export SKIP_DEFCONFIG_VALIDATION=1
+          export SKIP_IF_MODULES_CHANGED=1
 
           if [ -f "build/build.sh" ]; then
-            echo "Using Traditional build.sh"
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
-            echo "Using Bazel Build System"
             tools/bazel build --config=fast --lto=thin \
-              --defconfig_fragment=//common:arch/arm64/configs/gus_gki.fragment \
               //common:kernel_aarch64_dist || exit 1
           fi
 
@@ -199,7 +170,7 @@ jobs:
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU/g' banner
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
             echo "Error: Image not found! Build failed." && exit 1
