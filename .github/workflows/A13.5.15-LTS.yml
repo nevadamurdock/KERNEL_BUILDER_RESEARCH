@@ -1,4 +1,4 @@
-name: GusKernel GKI Ultimate A13-5.15 (ReSukiSU Hybrid)
+name: GusKernel GKI Ultimate A13-5.15+LTS (ReSukiSU Hybrid)
 
 on:
   workflow_dispatch:
@@ -105,7 +105,7 @@ jobs:
           
           # Inject Config Ultimate & Bypass
           cat <<EOF >> arch/arm64/configs/gki_defconfig
-          CONFIG_LOCALVERSION="-GusKernel"
+          CONFIG_LOCALVERSION="-GusKernel+LTS"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BIC=y
