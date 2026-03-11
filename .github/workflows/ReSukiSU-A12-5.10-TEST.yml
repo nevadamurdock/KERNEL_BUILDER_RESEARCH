@@ -1,0 +1,184 @@
+name: GusKernel GKI Ultimate A12-5.10 (ReSukiSU Hybrid)
+
+on:
+  workflow_dispatch:
+
+env:
+  SUSFS_VERSION: "2.0.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
+
+    steps:
+      - name: Checkout Workflow
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_tool_cache: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
+
+      - name: Setup Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+          git config --global user.email "build@kernel.resmi"
+          git config --global user.name "KernelBuilder"
+
+      - name: Repo Init & Sync
+        run: |
+          mkdir kernel-workspace
+          cd kernel-workspace
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+      - name: Setup ReSukiSU (Automatic Script)
+        run: |
+          cd kernel-workspace
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          
+          if [ -d "KernelSU" ]; then
+            ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
+          elif [ -d "resukisu" ]; then
+            ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
+          fi
+
+          sed -i '/kernelsu/d' common/drivers/Kconfig
+          sed -i '/kernelsu/d' common/drivers/Makefile
+          echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
+          echo 'obj-y += kernelsu/' >> common/drivers/Makefile
+
+          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+
+      - name: Integrate SUSFS Core
+        run: |
+          cd kernel-workspace
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs_src
+          
+          SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
+          cp -r susfs_src/kernel_patches/fs/* common/fs/
+          cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
+          
+          cd common
+          patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
+          
+          if [ "$SUBLEVEL" -le 209 ]; then 
+            sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
+            sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
+          fi
+          
+      - name: Prepare Config Fragments (ALL TCP Congestions)
+        run: |
+          cd kernel-workspace/common
+          
+          # Bersihkan config TCP bawaan biar gak bentrok
+          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
+          
+          # Masukkan SEMUA algoritma TCP yang tersedia di source
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          CONFIG_LOCALVERSION="-GusKernel"
+          CONFIG_LOCALVERSION_AUTO=n
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BIC=y
+          CONFIG_TCP_CONG_WESTWOOD=y
+          CONFIG_TCP_CONG_HTCP=y
+          CONFIG_TCP_CONG_HSTCP=y
+          CONFIG_TCP_CONG_HYBLA=y
+          CONFIG_TCP_CONG_VEGAS=y
+          CONFIG_TCP_CONG_SCALABLE=y
+          CONFIG_TCP_CONG_LP=y
+          CONFIG_TCP_CONG_VENO=y
+          CONFIG_TCP_CONG_YEAH=y
+          CONFIG_TCP_CONG_ILLINOIS=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_NET_SCH_FQ_CODEL=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_DEFAULT_TCP_CONG="bbr"
+          
+          # KSU & SUSFS & BBG
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_SUSFS=y
+          CONFIG_BBG=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          EOF
+
+      - name: Build Kernel (Ultimate Bypass Logic)
+        run: |
+          cd kernel-workspace
+          set -ex
+
+          # Clean build
+          rm -rf out
+
+          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
+          mkdir -p "$GKI_BIN_PATH"
+          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
+
+          # KILL SEMUA VALIDASI GOOGLE
+          # Ini trik supaya dia gak ngecek modules.order sama sekali
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
+
+          export LLVM=1
+          export LD=ld.lld
+          export HOSTLD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export SKIP_DEFCONFIG_VALIDATION=1
+          export SKIP_IF_MODULES_CHANGED=1
+
+          if [ -f "build/build.sh" ]; then
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          else
+            tools/bazel build --config=fast --lto=thin \
+              //common:kernel_aarch64_dist || exit 1
+          fi
+
+      - name: Prepare AnyKernel3 Packaging
+        run: |
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+              IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
+          fi
+          
+          if [ -f "$IMAGE_PATH" ]; then
+            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+            cp "$IMAGE_PATH" AnyKernel3/Image
+            cd AnyKernel3
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
+            zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+          else
+            echo "Error: Image not found! Build failed." && exit 1
+          fi
+
+      - name: Upload Final Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GusKernel-Flashable
+          path: GusKernel-Final.zip
