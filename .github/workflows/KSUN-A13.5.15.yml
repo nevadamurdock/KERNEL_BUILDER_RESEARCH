@@ -73,18 +73,28 @@ jobs:
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
-      - name: Integrate SUSFS Core
+      - name: Setup SUSFS
         run: |
           cd kernel-workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
-          
+        
+          # Konfigurasi Git untuk menghindari error compression/unencoding
+          git config --global core.compression 0
+        
+          # Gunakan --depth 1 agar clone lebih ringan dan cepat
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
+        
+          # Ambil SUBLEVEL dari Makefile
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
+        
+          # Copy file patch
           cp -r susfs_src/kernel_patches/fs/* common/fs/
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
-          
+        
           cd common
+          # Terapkan patch SUSFS
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
-          
+        
+          # Fix task_mmu.c jika SUBLEVEL <= 209
           if [ "$SUBLEVEL" -le 209 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
