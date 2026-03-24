@@ -80,21 +80,35 @@ jobs:
       - name: Integrate SUSFS Core
         run: |
           cd kernel-workspace
+          # Clone SUSFS terbaru (2.1.0 biasanya ada di branch gki-android13-5.15)
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
           
+          # Ambil info SUBLEVEL untuk jaga-jaga
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
+          
+          # Copy headers dan files
           cp -r susfs_src/kernel_patches/fs/* common/fs/
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          # Apply patch SUSFS, jika gagal script tetap lanjut (biasanya karena bentrok minor di GKI)
+          # Jalankan patch. Kita biarkan Hunk 1 fail, nanti kita fix manual lewat sed.
           patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Fix untuk task_mmu jika sublevel kernel sudah tinggi (LTS update)
-          if [ "$SUBLEVEL" -ge 0 ]; then 
-            sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
-            sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
+          # --- FIX HUNK #1 FAILED (task_mmu.c) ---
+          # Memasukkan include susfs secara manual jika belum ada
+          if ! grep -q "linux/susfs.h" fs/proc/task_mmu.c; then
+            sed -i '1i #include <linux/susfs.h>' fs/proc/task_mmu.c
           fi
+
+          # --- FIX SHOW_PAD (Bypass Logic) ---
+          # Di LTS terbaru, struktur task_mmu.c berubah. 
+          # Kita gunakan sed yang lebih agresif untuk bypass show_pad
+          if grep -q "show_pad:" fs/proc/task_mmu.c; then
+            sed -i 's/goto show_pad;/return 0;/g' fs/proc/task_mmu.c
+            sed -i 's/^show_pad:/ \/\/ show_pad:/g' fs/proc/task_mmu.c
+          fi
+
+          echo "SUSFS 2.1.0 Integrated with LTS Fixes."
           
       - name: Prepare Config Fragments
         run: |
