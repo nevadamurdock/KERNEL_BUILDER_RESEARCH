@@ -1,4 +1,4 @@
-name: GusKernel GKI Ultimate A13-5.15 (ReSukiSU Hybrid)
+name: Test ResukiSU+A13+5.15+2.1.0
 
 on:
   workflow_dispatch:
