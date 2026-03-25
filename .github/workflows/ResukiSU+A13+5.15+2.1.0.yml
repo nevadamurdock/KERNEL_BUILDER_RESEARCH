@@ -76,11 +76,22 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          patch -p1 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          if [ "$SUBLEVEL" -le 209 ]; then 
+          # SOLUSI: Hapus baris yang sering konflik di task_mmu.c sebelum patch
+          # Biasanya konflik di bagian header/include
+          
+          # Jalankan patch dengan toleransi fuzz 3
+          patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
+          
+          # Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
+          if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
+          fi
+
+          # Tambahan: Pastikan SUSFS terdefinisi di include
+          if [ ! -f "include/linux/susfs.h" ]; then
+            cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
