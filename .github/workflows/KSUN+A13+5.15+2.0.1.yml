@@ -50,21 +50,17 @@ jobs:
       - name: Setup KernelSU-Next (KSUNext)
         run: |
           cd kernel-workspace
-          # Menggunakan skrip resmi KSUNext
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
           
-          # Menyesuaikan link direktori untuk KSUNext
           if [ -d "KernelSU-Next" ]; then
             ln -sf $(pwd)/KernelSU-Next $(pwd)/common/drivers/kernelsu
           fi
 
-          # Integrasi ke Kconfig dan Makefile
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
-          # Integrasi Baseband-guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -78,7 +74,6 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          # Jalankan patch SUSFS
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
           if [ "$SUBLEVEL" -le 210 ]; then 
@@ -170,7 +165,6 @@ jobs:
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            # Ganti banner menjadi KSUNext
             sed -i 's/kernel.string=.*/kernel.string=GusKernel KSUNext Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
@@ -178,7 +172,7 @@ jobs:
           fi
 
       - name: Upload Final Build
-        uses: upload-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
           name: GusKernel-Flashable
           path: GusKernel-Final.zip
