@@ -1,4 +1,4 @@
-name: Test KSUNext+A13+5.15+2.1.0
+name: GusKernel KSUNext SUSFS Final
 
 on:
   workflow_dispatch:
@@ -61,6 +61,7 @@ jobs:
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
+          # Integrasi Baseband-guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -69,23 +70,27 @@ jobs:
           cd kernel-workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
           
-          SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
-          cp -r susfs_src/kernel_patches/fs/* common/fs/
-          cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
+          # 1. Salin File Inti SUSFS
+          cp susfs_src/kernel_patches/fs/susfs.c common/fs/
+          cp susfs_src/kernel_patches/include/linux/susfs.h common/include/linux/
+          cp susfs_src/kernel_patches/include/linux/susfs_def.h common/include/linux/
+
+          # 2. Integrasi ke Makefile & Kconfig (PENTING AGAR TERBACA)
+          sed -i '/obj-y += susfs.o/d' common/fs/Makefile
+          echo "obj-y += susfs.o" >> common/fs/Makefile
           
+          # 3. Jalankan Patch Otomatis
           cd common
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
+          # Fix manual task_mmu.c jika sublevel <= 210
+          SUBLEVEL=$(grep "^SUBLEVEL =" Makefile | awk '{print $3}')
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
 
-          if [ ! -f "include/linux/susfs.h" ]; then
-            cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
-          fi
-          
-      - name: Prepare Config Fragments (ALL TCP Congestions)
+      - name: Prepare Config Fragments
         run: |
           cd kernel-workspace/common
           sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
@@ -127,7 +132,7 @@ jobs:
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
 
-      - name: Build Kernel (Ultimate Bypass Logic)
+      - name: Build Kernel
         run: |
           cd kernel-workspace
           set -ex
@@ -165,7 +170,7 @@ jobs:
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            sed -i 's/kernel.string=.*/kernel.string=GusKernel KSUNext Hybrid/g' banner
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel KSUNext SUSFS Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
             echo "Error: Image not found! Build failed." && exit 1
