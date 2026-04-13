@@ -1,4 +1,4 @@
-name: Test KSUN+A13+5.15+2.1.0
+name: Test KSUNext+A13+5.15+2.1.0
 
 on:
   workflow_dispatch:
@@ -47,22 +47,24 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
-      - name: Setup ReSukiSU (Automatic Script)
+      - name: Setup KernelSU-Next (KSUNext)
         run: |
           cd kernel-workspace
-          curl -LSs "curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash
+          # Menggunakan skrip resmi KSUNext
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
           
-          if [ -d "KernelSU" ]; then
-            ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
-          elif [ -d "resukisu" ]; then
-            ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
+          # Menyesuaikan link direktori untuk KSUNext
+          if [ -d "KernelSU-Next" ]; then
+            ln -sf $(pwd)/KernelSU-Next $(pwd)/common/drivers/kernelsu
           fi
 
+          # Integrasi ke Kconfig dan Makefile
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
+          # Integrasi Baseband-guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -76,20 +78,14 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          
-          # SOLUSI: Hapus baris yang sering konflik di task_mmu.c sebelum patch
-          # Biasanya konflik di bagian header/include
-          
-          # Jalankan patch dengan toleransi fuzz 3
+          # Jalankan patch SUSFS
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
 
-          # Tambahan: Pastikan SUSFS terdefinisi di include
           if [ ! -f "include/linux/susfs.h" ]; then
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
@@ -97,12 +93,9 @@ jobs:
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
           cd kernel-workspace/common
-          
-          # Bersihkan config TCP bawaan biar gak bentrok
           sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
           
-          # Masukkan SEMUA algoritma TCP yang tersedia di source
           cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
@@ -124,12 +117,12 @@ jobs:
           CONFIG_DEFAULT_BBR=y
           CONFIG_DEFAULT_TCP_CONG="bbr"
           
-          # KSU & SUSFS & BBG
+          # KSUNext & SUSFS & BBG
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_NEXT=y
           CONFIG_KSU_SUSFS=y
           CONFIG_SUSFS=y
           CONFIG_BBG=y
@@ -143,16 +136,12 @@ jobs:
         run: |
           cd kernel-workspace
           set -ex
-
-          # Clean build
           rm -rf out
 
           GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # KILL SEMUA VALIDASI GOOGLE
-          # Ini trik supaya dia gak ngecek modules.order sama sekali
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
@@ -167,8 +156,7 @@ jobs:
           if [ -f "build/build.sh" ]; then
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
-            tools/bazel build --config=fast --lto=thin \
-              //common:kernel_aarch64_dist || exit 1
+            tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist || exit 1
           fi
 
       - name: Prepare AnyKernel3 Packaging
@@ -182,14 +170,15 @@ jobs:
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
+            # Ganti banner menjadi KSUNext
+            sed -i 's/kernel.string=.*/kernel.string=GusKernel KSUNext Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
             echo "Error: Image not found! Build failed." && exit 1
           fi
 
       - name: Upload Final Build
-        uses: actions/upload-artifact@v4
+        uses: upload-artifact@v4
         with:
           name: GusKernel-Flashable
           path: GusKernel-Final.zip
