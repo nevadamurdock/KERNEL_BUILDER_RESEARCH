@@ -1,4 +1,4 @@
-name: Test ResukiSU+A13+5.15+2.1.0
+name: Test ResukiSU+A14+5.15+2.1.0
 
 on:
   workflow_dispatch:
