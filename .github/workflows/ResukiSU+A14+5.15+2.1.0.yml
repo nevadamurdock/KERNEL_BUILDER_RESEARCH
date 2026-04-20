@@ -1,4 +1,4 @@
-name: GusKernel A14-5.15 Legacy Build
+name: GusKernel A14-5.15 Pure Manual Build
 
 on:
   workflow_dispatch:
@@ -34,10 +34,9 @@ jobs:
       - name: Setup Features (KSU, SUSFS, BBG)
         run: |
           cd kernel-workspace
-          # Setup KSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Gunakan SYMLINK (Karena kita tidak pakai Bazel, symlink tidak akan error infinite loop)
+          # Gunakan symlink atau copy (Manual build tidak sensitif symlink)
           ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
           
           # Patch SUSFS
@@ -47,7 +46,7 @@ jobs:
           cd common
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch || true
           
-          # Integrasi manual ke Kconfig
+          # Integrasi Kconfig
           echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
           echo 'obj-y += kernelsu/' >> drivers/Makefile
           
@@ -68,32 +67,38 @@ jobs:
           CONFIG_BBG=y
           EOF
 
-      - name: Build Kernel (Legacy build.sh Bypass)
+      - name: Build Kernel (Manual Make)
         run: |
           cd kernel-workspace
-          set -ex
+          # Deteksi folder clang secara otomatis
+          CLANG_DIR=$(ls -d $(pwd)/prebuilts/clang/host/linux-x86/clang-*)
+          export PATH="$CLANG_DIR/bin:$(pwd)/prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
           
-          # Hapus folder out lama
-          rm -rf out
-          
-          # Kunci Bypass WildKernels: 
-          # Menggunakan path toolchain internal hasil repo sync agar tetap hermetic 
-          # tapi dipanggil via build.sh manual.
-          
-          export PATH="$(pwd)/prebuilts/kernel-build-tools/linux-x86/bin:$(pwd)/prebuilts/clang/host/linux-x86/clang-r487747c/bin:$PATH"
+          export ARCH=arm64
           export LLVM=1
           export LLVM_IAS=1
-          export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           
-          # Jalankan build.sh secara langsung dengan config GKI
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 ./build/build.sh
+          cd common
+          # Buat output folder
+          mkdir -p ../out
+          
+          # 1. Buat config
+          make O=../out ARCH=arm64 vendor/gki_defconfig
+          
+          # 2. Build Image
+          make -j$(nproc --all) O=../out \
+               ARCH=arm64 \
+               LLVM=1 \
+               LLVM_IAS=1 \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+               Image
 
       - name: Packaging
         run: |
-          # Di build.sh klasik, output ada di folder out/
+          # Di build manual, Image biasanya ada di out/arch/arm64/boot/
           IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
           if [ -f "$IMAGE_PATH" ]; then
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
@@ -101,11 +106,11 @@ jobs:
             cd AnyKernel3
             zip -r9 "../GusKernel-Final.zip" *
           else
-            echo "Build failed: Image not found in out/" && exit 1
+            echo "Build gagal: Image tidak ditemukan!" && exit 1
           fi
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GusKernel-Legacy-Final
+          name: GusKernel-Manual-Final
           path: GusKernel-Final.zip
