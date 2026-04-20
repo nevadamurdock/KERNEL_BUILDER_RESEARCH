@@ -1,4 +1,4 @@
-name: GusKernel A14-5.15 Pure Manual Build
+name: GusKernel A14-5.15 Manual Build Fix
 
 on:
   workflow_dispatch:
@@ -36,8 +36,9 @@ jobs:
           cd kernel-workspace
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Gunakan symlink atau copy (Manual build tidak sensitif symlink)
-          ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
+          # Gunakan COPY fisik untuk build manual agar aman
+          rm -rf common/drivers/kernelsu
+          cp -r KernelSU common/drivers/kernelsu || git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
           
           # Patch SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 susfs_src
@@ -46,7 +47,9 @@ jobs:
           cd common
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch || true
           
-          # Integrasi Kconfig
+          # Integrasi manual ke Kconfig (Hapus dulu jika sudah ada dari script setup)
+          sed -i '/kernelsu/d' drivers/Kconfig
+          sed -i '/kernelsu/d' drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
           echo 'obj-y += kernelsu/' >> drivers/Makefile
           
@@ -56,6 +59,7 @@ jobs:
 
       - name: Configure GKI Defconfig
         run: |
+          # Modifikasi defconfig asli sebelum make
           cd kernel-workspace/common
           cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_LOCALVERSION="-GusKernel"
@@ -67,10 +71,9 @@ jobs:
           CONFIG_BBG=y
           EOF
 
-      - name: Build Kernel (Manual Make)
+      - name: Build Kernel (Pure Manual Make)
         run: |
           cd kernel-workspace
-          # Deteksi folder clang secara otomatis
           CLANG_DIR=$(ls -d $(pwd)/prebuilts/clang/host/linux-x86/clang-*)
           export PATH="$CLANG_DIR/bin:$(pwd)/prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
           
@@ -81,13 +84,11 @@ jobs:
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           
           cd common
-          # Buat output folder
           mkdir -p ../out
           
-          # 1. Buat config
-          make O=../out ARCH=arm64 vendor/gki_defconfig
+          # Gunakan gki_defconfig tanpa prefix vendor/
+          make O=../out ARCH=arm64 gki_defconfig
           
-          # 2. Build Image
           make -j$(nproc --all) O=../out \
                ARCH=arm64 \
                LLVM=1 \
@@ -98,7 +99,6 @@ jobs:
 
       - name: Packaging
         run: |
-          # Di build manual, Image biasanya ada di out/arch/arm64/boot/
           IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
           if [ -f "$IMAGE_PATH" ]; then
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
@@ -112,5 +112,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GusKernel-Manual-Final
+          name: GusKernel-Final
           path: GusKernel-Final.zip
