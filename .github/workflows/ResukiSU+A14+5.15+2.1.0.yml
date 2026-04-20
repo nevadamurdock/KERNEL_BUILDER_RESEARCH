@@ -1,16 +1,11 @@
-name: Test ResukiSU+A14+5.15+2.1.0
+name: GusKernel A14-5.15 Full Bazel
 
 on:
   workflow_dispatch:
 
-env:
-  SUSFS_VERSION: "2.1.0"
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 480
-
     steps:
       - name: Checkout Workflow
         uses: actions/checkout@v4
@@ -19,161 +14,96 @@ jobs:
         uses: endersonmenezes/free-disk-space@v3
         with:
           remove_android: true
-          remove_dotnet: true
-          remove_tool_cache: true
           remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-          rm_cmd: "rmz"
-          rmz_version: "3.1.1"
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
-          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
-
-      - name: Setup Repo Tool
-        run: |
+          # Repo tool setup
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           sudo ln -sf ~/bin/repo /usr/bin/repo
-          git config --global user.email "build@kernel.resmi"
-          git config --global user.name "KernelBuilder"
 
       - name: Repo Init & Sync
         run: |
-          mkdir kernel-workspace
-          cd kernel-workspace
+          mkdir kernel-workspace && cd kernel-workspace
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
-          repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+          repo sync -c -j$(nproc --all) --no-tags --force-sync
 
-      - name: Setup ReSukiSU (Final Bazel Fix)
+      - name: Setup ReSukiSU & Baseband Guard
         run: |
           cd kernel-workspace
-          # Jalankan script setup awal
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Pastikan folder target bersih dan gunakan COPY fisik bukan SYMLINK
+          # Pindahkan KSU secara fisik ke dalam drivers agar masuk sandbox Bazel
           rm -rf common/drivers/kernelsu
-          if [ -d "KernelSU" ]; then
-            cp -r KernelSU common/drivers/kernelsu
-          elif [ -d "resukisu" ]; then
-            cp -r resukisu common/drivers/kernelsu
-          else
-            git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
-          fi
-
-          # Hapus SEMUA symlink di dalam folder kernelsu (Kunci sukses Bazel)
+          mv KernelSU common/drivers/kernelsu || git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
+          
+          # Bersihkan symlink agar Bazel tidak error infinite loop
           find common/drivers/kernelsu -type l -delete
           
-          # Integrasi ke Kconfig & Makefile
+          # Registrasi ke Kconfig
           sed -i '/kernelsu/d' common/drivers/Kconfig
-          sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
+          sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
-          # Integrasi Baseband Guard
+          # Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
-      - name: Integrate SUSFS Core
+      - name: Integrate SUSFS
         run: |
           cd kernel-workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 susfs_src
-          
-          SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
           cp -r susfs_src/kernel_patches/fs/* common/fs/
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
-          
           cd common
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch || true
-          
-          if [ "$SUBLEVEL" -le 210 ]; then 
-            sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
-            sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
-          fi
 
-          if [ ! -f "include/linux/susfs.h" ]; then
-            cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
-          fi
-          
-      - name: Prepare Config Fragments
+      - name: Configure Defconfig
         run: |
           cd kernel-workspace/common
-          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-          
           cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_LOCALVERSION="-GusKernel"
-          CONFIG_LOCALVERSION_AUTO=n
-          CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
           CONFIG_DEFAULT_BBR=y
-          CONFIG_DEFAULT_TCP_CONG="bbr"
-          CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_HAVE_KPROBES=y
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_SUSFS=y
           CONFIG_SUSFS=y
           CONFIG_BBG=y
-          CONFIG_KALLSYMS=y
-          CONFIG_KALLSYMS_ALL=y
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
           EOF
 
-      - name: Build Kernel (Ultimate Bypass Logic)
+      - name: Build with Bazel (Kleaf)
         run: |
           cd kernel-workspace
-          set -ex
-
-          # Bersihkan cache Bazel secara total agar tidak membawa metadata symlink lama
-          rm -rf out
-          if [ -d "tools" ]; then
-            ./tools/bazel clean --expunge || true
-          fi
-
-          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
-          mkdir -p "$GKI_BIN_PATH"
-          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
-
-          # Matikan validasi GKI Google yang sering bikin build stop
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
-
-          export LLVM=1
-          export LD=ld.lld
-          export HOSTLD=ld.lld
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export SKIP_DEFCONFIG_VALIDATION=1
-          export SKIP_IF_MODULES_CHANGED=1
-
-          # Eksekusi build via Bazel/Kleaf
-          tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
-
-      - name: Prepare AnyKernel3 Packaging
-        run: |
-          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
-          if [ -z "$IMAGE_PATH" ]; then
-              IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
-          fi
+          # Menghapus cache lama dan memaksa Bazel menggunakan environment yang bersih
+          [ -d "tools" ] && ./tools/bazel clean --expunge || true
           
+          # Eksekusi build murni menggunakan Bazel target
+          # --config=fast: Mematikan beberapa pengecekan berat untuk CI
+          # --lto=thin: Optimasi link-time yang lebih cepat
+          # //common:kernel_aarch64_dist: Target utama untuk distribusi GKI
+          
+          ./tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
+
+      - name: Package AnyKernel3
+        run: |
+          # Bazel menaruh output di bazel-bin
+          IMAGE_PATH=$(find kernel-workspace/bazel-bin -name Image -type f | head -n 1)
           if [ -f "$IMAGE_PATH" ]; then
-            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1 AnyKernel3
+            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
-            zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+            zip -r9 "../GusKernel-Final.zip" *
           else
-            echo "Error: Image not found! Build failed." && exit 1
+            echo "Image tidak ditemukan di bazel-bin!" && exit 1
           fi
 
-      - name: Upload Final Build
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GusKernel-Flashable
+          name: GusKernel-Bazel
           path: GusKernel-Final.zip
