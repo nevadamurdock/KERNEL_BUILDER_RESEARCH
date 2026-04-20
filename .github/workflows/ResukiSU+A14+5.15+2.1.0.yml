@@ -1,4 +1,4 @@
-name: GusKernel A14-5.15 Bazel-Kleaf
+name: GusKernel A14-5.15 Legacy Build
 
 on:
   workflow_dispatch:
@@ -14,8 +14,7 @@ jobs:
         uses: endersonmenezes/free-disk-space@v3
         with:
           remove_android: true
-          remove_dotnet: true
-          remove_tool_cache: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
 
       - name: Install Dependencies
         run: |
@@ -35,13 +34,11 @@ jobs:
       - name: Setup Features (KSU, SUSFS, BBG)
         run: |
           cd kernel-workspace
-          # Setup KSU & BBG
+          # Setup KSU
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
-          rm -rf common/drivers/kernelsu
-          [ -d "KernelSU" ] && cp -r KernelSU common/drivers/kernelsu || git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
           
-          # ANTI-LOOP BAZEL: Bersihkan symlink
-          find common/drivers/kernelsu -type l -delete
+          # Gunakan SYMLINK (Karena kita tidak pakai Bazel, symlink tidak akan error infinite loop)
+          ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
           
           # Patch SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 susfs_src
@@ -50,11 +47,11 @@ jobs:
           cd common
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch || true
           
-          # Integrasi ke Kconfig
+          # Integrasi manual ke Kconfig
           echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
           echo 'obj-y += kernelsu/' >> drivers/Makefile
           
-          # BBG
+          # Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
 
@@ -71,37 +68,44 @@ jobs:
           CONFIG_BBG=y
           EOF
 
-      - name: Build with Bazel (WildKernels Style)
+      - name: Build Kernel (Legacy build.sh Bypass)
         run: |
           cd kernel-workspace
           set -ex
           
-          # Pastikan tidak ada sisa build lama
+          # Hapus folder out lama
           rm -rf out
-          ./tools/bazel clean --expunge
           
-          # Tambahkan flag --hermetic untuk memastikan Bazel hanya menggunakan toolchain internal
-          # Menggunakan target //common:kernel_aarch64_dist sesuai standar A14
-          ./tools/bazel build --config=fast \
-            --lto=thin \
-            --jobs=$(nproc --all) \
-            //common:kernel_aarch64_dist
+          # Kunci Bypass WildKernels: 
+          # Menggunakan path toolchain internal hasil repo sync agar tetap hermetic 
+          # tapi dipanggil via build.sh manual.
+          
+          export PATH="$(pwd)/prebuilts/kernel-build-tools/linux-x86/bin:$(pwd)/prebuilts/clang/host/linux-x86/clang-r487747c/bin:$PATH"
+          export LLVM=1
+          export LLVM_IAS=1
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          
+          # Jalankan build.sh secara langsung dengan config GKI
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 ./build/build.sh
 
       - name: Packaging
         run: |
-          # Cari Image di bazel-bin (Lokasi standar Kleaf)
-          IMAGE_PATH=$(find kernel-workspace/bazel-bin/common -name Image -type f | head -n 1)
+          # Di build.sh klasik, output ada di folder out/
+          IMAGE_PATH=$(find kernel-workspace/out -name Image -type f | head -n 1)
           if [ -f "$IMAGE_PATH" ]; then
             git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
             cp "$IMAGE_PATH" AnyKernel3/Image
             cd AnyKernel3
-            zip -r9 "../GusKernel-Final.zip" * -x .git README.md
+            zip -r9 "../GusKernel-Final.zip" *
           else
-            echo "Build failed: Image not found in bazel-bin" && exit 1
+            echo "Build failed: Image not found in out/" && exit 1
           fi
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GusKernel-Bazel-Final
+          name: GusKernel-Legacy-Final
           path: GusKernel-Final.zip
