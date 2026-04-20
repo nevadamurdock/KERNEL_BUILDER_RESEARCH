@@ -47,28 +47,35 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
-      - name: Setup ReSukiSU (Fixed for Bazel)
+      - name: Setup ReSukiSU (Final Fix for Bazel)
         run: |
           cd kernel-workspace
+          # Jalankan setup awal
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Gunakan metode MOVE bukan SYMLINK untuk menghindari infinite loop di Bazel
+          # Pastikan folder target bersih sebelum diisi
+          rm -rf common/drivers/kernelsu
+          
+          # Salin folder secara fisik agar terbaca Bazel (Bukan Symlink)
           if [ -d "KernelSU" ]; then
-            rm -rf common/drivers/kernelsu
-            mv KernelSU common/drivers/kernelsu
+            cp -r KernelSU common/drivers/kernelsu
           elif [ -d "resukisu" ]; then
-            rm -rf common/drivers/kernelsu
-            mv resukisu common/drivers/kernelsu
+            cp -r resukisu common/drivers/kernelsu
+          else
+            # Fallback jika folder tidak ditemukan
+            git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
           fi
 
-          # Putus potensi loop symlink di dalam subfolder
+          # Hapus potensi circular symlink di dalam folder KSU
           rm -f common/drivers/kernelsu/kernel/KernelSU
 
+          # Integrasi ke sistem menu kernel
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
+          # Integrasi Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -126,10 +133,9 @@ jobs:
           cd kernel-workspace
           set -ex
 
-          # Bersihkan sisa symlink dan cache Bazel
-          find . -type l -name "KernelSU" -delete || true
+          # Bersihkan cache untuk menghindari sisa metadata symlink lama
           rm -rf out
-          if [ -f "tools/bazel" ]; then
+          if [ -d "tools" ]; then
             ./tools/bazel clean --expunge || true
           fi
 
@@ -137,6 +143,7 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
+          # Matikan validasi GKI Google
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
@@ -168,7 +175,7 @@ jobs:
             sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
-            echo "Error: Image not found!" && exit 1
+            echo "Error: Image not found! Build failed." && exit 1
           fi
 
       - name: Upload Final Build
