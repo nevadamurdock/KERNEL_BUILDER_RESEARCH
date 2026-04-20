@@ -47,29 +47,26 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
-      - name: Setup ReSukiSU (Final Fix for Bazel)
+      - name: Setup ReSukiSU (Final Bazel Fix)
         run: |
           cd kernel-workspace
-          # Jalankan setup awal
+          # Jalankan script setup awal
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Pastikan folder target bersih sebelum diisi
+          # Pastikan folder target bersih dan gunakan COPY fisik bukan SYMLINK
           rm -rf common/drivers/kernelsu
-          
-          # Salin folder secara fisik agar terbaca Bazel (Bukan Symlink)
           if [ -d "KernelSU" ]; then
             cp -r KernelSU common/drivers/kernelsu
           elif [ -d "resukisu" ]; then
             cp -r resukisu common/drivers/kernelsu
           else
-            # Fallback jika folder tidak ditemukan
             git clone https://github.com/tiann/KernelSU common/drivers/kernelsu
           fi
 
-          # Hapus potensi circular symlink di dalam folder KSU
-          rm -f common/drivers/kernelsu/kernel/KernelSU
-
-          # Integrasi ke sistem menu kernel
+          # Hapus SEMUA symlink di dalam folder kernelsu (Kunci sukses Bazel)
+          find common/drivers/kernelsu -type l -delete
+          
+          # Integrasi ke Kconfig & Makefile
           sed -i '/kernelsu/d' common/drivers/Kconfig
           sed -i '/kernelsu/d' common/drivers/Makefile
           echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
@@ -133,7 +130,7 @@ jobs:
           cd kernel-workspace
           set -ex
 
-          # Bersihkan cache untuk menghindari sisa metadata symlink lama
+          # Bersihkan cache Bazel secara total agar tidak membawa metadata symlink lama
           rm -rf out
           if [ -d "tools" ]; then
             ./tools/bazel clean --expunge || true
@@ -143,7 +140,7 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # Matikan validasi GKI Google
+          # Matikan validasi GKI Google yang sering bikin build stop
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
@@ -155,11 +152,8 @@ jobs:
           export SKIP_DEFCONFIG_VALIDATION=1
           export SKIP_IF_MODULES_CHANGED=1
 
-          if [ -f "build/build.sh" ]; then
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
-          else
-            tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
-          fi
+          # Eksekusi build via Bazel/Kleaf
+          tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
 
       - name: Prepare AnyKernel3 Packaging
         run: |
