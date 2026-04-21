@@ -25,10 +25,15 @@ jobs:
           rm_cmd: "rmz"
           rmz_version: "3.1.1"
 
+      - name: Setup more Swap (for LTO)
+        uses: thejerrybao/setup-swap-space@v1
+        with:
+          swap-size-gb: 25
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3 curl git zip perl
           sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
 
       - name: Setup Repo Tool
@@ -76,87 +81,69 @@ jobs:
           cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
           
           cd common
-          
-          # SOLUSI: Hapus baris yang sering konflik di task_mmu.c sebelum patch
-          # Biasanya konflik di bagian header/include
-          
-          # Jalankan patch dengan toleransi fuzz 3
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch || true
           
-          # Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
 
-          # Tambahan: Pastikan SUSFS terdefinisi di include
           if [ ! -f "include/linux/susfs.h" ]; then
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
           
-      - name: Prepare Config Fragments (ALL TCP Congestions)
+      - name: Create Fragment Config
         run: |
-          cd kernel-workspace/common
-          
-          # Bersihkan config TCP bawaan biar gak bentrok
-          sed -i '/CONFIG_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_TCP_CONG/d' arch/arm64/configs/gki_defconfig
-          
-          # Masukkan SEMUA algoritma TCP yang tersedia di source
-          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          cat <<EOF > wild_gki.fragment
           CONFIG_LOCALVERSION="-GusKernel"
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BIC=y
           CONFIG_TCP_CONG_WESTWOOD=y
-          CONFIG_TCP_CONG_HTCP=y
-          CONFIG_TCP_CONG_HSTCP=y
-          CONFIG_TCP_CONG_HYBLA=y
-          CONFIG_TCP_CONG_VEGAS=y
-          CONFIG_TCP_CONG_SCALABLE=y
-          CONFIG_TCP_CONG_LP=y
-          CONFIG_TCP_CONG_VENO=y
-          CONFIG_TCP_CONG_YEAH=y
-          CONFIG_TCP_CONG_ILLINOIS=y
           CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_TCP_CONG="westwood"
           CONFIG_NET_SCH_FQ=y
           CONFIG_NET_SCH_FQ_CODEL=y
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_DEFAULT_TCP_CONG="bbr"
-          
-          # KSU & SUSFS & BBG
-          CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_HAVE_KPROBES=y
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_SUSFS=y
           CONFIG_SUSFS=y
           CONFIG_BBG=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
 
-      - name: Build Kernel (Ultimate Bypass Logic)
+      - name: Remove Protected Exports
+        working-directory: ${{ github.workspace }}/kernel-workspace
         run: |
-          cd kernel-workspace
           set -ex
+          if [ ! -f "build/build.sh" ]; then
+            rm -rf common/android/abi_gki_protected_exports_*
+            perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' common/BUILD.bazel
+            sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
+          fi
 
-          # Clean build
-          rm -rf out
+      - name: Clean Kernel Flags
+        run: |
+          set -ex
+          cd kernel-workspace/common
+          
+          [ -f Makefile ] && sed -i 's/ -dirty//g' Makefile
+          [ -f arch/arm64/configs/gki_defconfig ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/g' arch/arm64/configs/gki_defconfig
+          find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/SKIP_CP_KERNEL_HDRS=1//g' {} +
+          [ -f include/generated/utsrelease.h ] && sed -i 's/^UTS_RELEASE.*/UTS_RELEASE="GusKernel"/' include/generated/utsrelease.h || true
 
-          GKI_BIN_PATH="build/kernel/build-tools/path/linux-x86"
-          mkdir -p "$GKI_BIN_PATH"
-          ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
-
-          # KILL SEMUA VALIDASI GOOGLE
-          # Ini trik supaya dia gak ngecek modules.order sama sekali
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
-          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
-
+      - name: Build Kernel
+        working-directory: ${{ github.workspace }}/kernel-workspace
+        env:
+          SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
+          KBUILD_BUILD_TIMESTAMP: ${{ env.KBUILD_BUILD_TIMESTAMP }}
+        run: |
+          set -ex
+          
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
@@ -165,10 +152,10 @@ jobs:
           export SKIP_IF_MODULES_CHANGED=1
 
           if [ -f "build/build.sh" ]; then
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+            GKI_DEFCONFIG_FRAGMENT="${{ github.workspace }}/wild_gki.fragment" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
           else
-            tools/bazel build --config=fast --lto=thin \
-              //common:kernel_aarch64_dist || exit 1
+            cp "${{ github.workspace }}/wild_gki.fragment" common/arch/arm64/configs/wild_gki.fragment
+            tools/bazel build --config=release --stamp --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
           fi
 
       - name: Prepare AnyKernel3 Packaging
@@ -185,7 +172,7 @@ jobs:
             sed -i 's/kernel.string=.*/kernel.string=GusKernel ReSukiSU Hybrid/g' banner
             zip -r9 "../GusKernel-Final.zip" * -x .git README.md
           else
-            echo "Error: Image not found! Build failed." && exit 1
+            echo "Error: Image not found!" && exit 1
           fi
 
       - name: Upload Final Build
