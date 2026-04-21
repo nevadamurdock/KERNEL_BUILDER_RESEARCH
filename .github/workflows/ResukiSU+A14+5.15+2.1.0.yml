@@ -53,33 +53,30 @@ jobs:
           cd kernel-workspace
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
-          # Buat link agar working-directory: kernel tetap valid
           ln -sf $(pwd) ../kernel
 
-      - name: Setup ReSukiSU (Fix Infinite Symlink)
+      - name: Setup ReSukiSU (No-Symlink Fix for Bazel)
         run: |
           cd kernel-workspace
           
-          # Bersihkan sisa-sisa yang bisa merusak struktur Bazel
+          # Bersihkan sisa-sisa lama
           rm -rf KernelSU resukisu
           rm -rf common/drivers/kernelsu
           
-          # Jalankan setup
+          # Jalankan setup otomatis
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
-          # Perbaikan krusial: Hapus folder 'kernel' di dalam KernelSU yang memicu loop
-          if [ -d "KernelSU/kernel" ]; then
-            rm -rf KernelSU/kernel
+          # SOLUSI BAZEL: Pindahkan folder fisik, jangan pakai symlink
+          if [ -d "KernelSU" ]; then
+            mv KernelSU common/drivers/kernelsu
+          elif [ -d "resukisu" ]; then
+            mv resukisu common/drivers/kernelsu
           fi
           
-          # Buat symlink yang benar
-          if [ -d "KernelSU" ]; then
-            ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
-          elif [ -d "resukisu" ]; then
-            ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
-          fi
+          # Hapus folder 'kernel' di dalam kernelsu jika ada (pencegahan loop)
+          rm -rf common/drivers/kernelsu/kernel
 
-          # Registrasi ke Kconfig/Makefile secara aman
+          # Registrasi ke Kconfig/Makefile (Gunakan jalur relatif agar aman di sandbox)
           grep -q "drivers/kernelsu/Kconfig" common/drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           grep -q "obj-y += kernelsu/" common/drivers/Makefile || echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
@@ -170,6 +167,7 @@ jobs:
             GKI_DEFCONFIG_FRAGMENT="$GITHUB_WORKSPACE/wild_gki.fragment" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
           else
             cp "$GITHUB_WORKSPACE/wild_gki.fragment" common/arch/arm64/configs/wild_gki.fragment
+            # Tambahkan flag --sandbox_debug jika ingin melihat detail lebih lanjut jika gagal
             tools/bazel build --config=release --stamp --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
           fi
 
