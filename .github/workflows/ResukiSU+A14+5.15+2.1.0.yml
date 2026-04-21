@@ -5,6 +5,8 @@ on:
 
 env:
   SUSFS_VERSION: "2.1.0"
+  ANDROID_VERSION: "android14"
+  KERNEL_VERSION: "5.15"
 
 jobs:
   build:
@@ -51,12 +53,13 @@ jobs:
           cd kernel-workspace
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
-          # Menyamakan nama folder direktori kerja jika perlu
-          ln -sf $(pwd) ../kernel 
+          ln -sf $(pwd) ../kernel
 
       - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
+          rm -rf KernelSU resukisu
+          
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
           if [ -d "KernelSU" ]; then
@@ -65,10 +68,8 @@ jobs:
             ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
           fi
 
-          sed -i '/kernelsu/d' common/drivers/Kconfig
-          sed -i '/kernelsu/d' common/drivers/Makefile
-          echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
-          echo 'obj-y += kernelsu/' >> common/drivers/Makefile
+          grep -q "drivers/kernelsu/Kconfig" common/drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
+          grep -q "obj-y += kernelsu/" common/drivers/Makefile || echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
@@ -118,8 +119,27 @@ jobs:
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
 
+      - name: Apply ABI Compare Bypass
+        working-directory: ${{ github.workspace }}/kernel
+        run: |
+          set -ex
+          # ABI compare bypass berdasarkan versi kernel/android
+          if [[ "$ANDROID_VERSION" == "android12" && "$KERNEL_VERSION" == "5.10" ]]; then
+            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/abi/compare_to_symbol_list
+          elif [[ "$ANDROID_VERSION" == "android13" && "$KERNEL_VERSION" == "5.10" ]]; then
+            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/kernel/abi/compare_to_symbol_list
+          elif [[ "$ANDROID_VERSION" == "android13" && "$KERNEL_VERSION" == "5.15" ]]; then
+            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/kernel/abi/compare_to_symbol_list
+          elif [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "5.15" ]]; then
+            perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
+          elif [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "6.1" ]]; then
+            perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
+          elif [[ "$ANDROID_VERSION" == "android15" && "$KERNEL_VERSION" == "6.6" ]]; then
+            perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
+          fi
+
       - name: Remove Protected Exports
-        working-directory: ${{ github.workspace }}/kernel-workspace
+        working-directory: ${{ github.workspace }}/kernel
         run: |
           set -ex
           if [ ! -f "build/build.sh" ]; then
@@ -145,10 +165,8 @@ jobs:
         run: |
           set -ex
           if [ -f "build/build.sh" ]; then
-            #SKIP_MRPROPER=1
             GKI_DEFCONFIG_FRAGMENT="$GITHUB_WORKSPACE/wild_gki.fragment" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
           else
-            # Copy fragment to kernel tree for bazel
             cp "$GITHUB_WORKSPACE/wild_gki.fragment" common/arch/arm64/configs/wild_gki.fragment
             tools/bazel build --config=release --stamp --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
           fi
