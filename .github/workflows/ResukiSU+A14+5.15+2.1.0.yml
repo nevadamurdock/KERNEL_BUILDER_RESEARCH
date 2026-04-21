@@ -53,24 +53,37 @@ jobs:
           cd kernel-workspace
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+          # Buat link agar working-directory: kernel tetap valid
           ln -sf $(pwd) ../kernel
 
-      - name: Setup ReSukiSU (Automatic Script)
+      - name: Setup ReSukiSU (Fix Infinite Symlink)
         run: |
           cd kernel-workspace
-          rm -rf KernelSU resukisu
           
+          # Bersihkan sisa-sisa yang bisa merusak struktur Bazel
+          rm -rf KernelSU resukisu
+          rm -rf common/drivers/kernelsu
+          
+          # Jalankan setup
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
+          # Perbaikan krusial: Hapus folder 'kernel' di dalam KernelSU yang memicu loop
+          if [ -d "KernelSU/kernel" ]; then
+            rm -rf KernelSU/kernel
+          fi
+          
+          # Buat symlink yang benar
           if [ -d "KernelSU" ]; then
             ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
           elif [ -d "resukisu" ]; then
             ln -sf $(pwd)/resukisu $(pwd)/common/drivers/kernelsu
           fi
 
+          # Registrasi ke Kconfig/Makefile secara aman
           grep -q "drivers/kernelsu/Kconfig" common/drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
           grep -q "obj-y += kernelsu/" common/drivers/Makefile || echo 'obj-y += kernelsu/' >> common/drivers/Makefile
 
+          # Setup Baseband Guard
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
 
@@ -123,18 +136,7 @@ jobs:
         working-directory: ${{ github.workspace }}/kernel
         run: |
           set -ex
-          # ABI compare bypass berdasarkan versi kernel/android
-          if [[ "$ANDROID_VERSION" == "android12" && "$KERNEL_VERSION" == "5.10" ]]; then
-            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/abi/compare_to_symbol_list
-          elif [[ "$ANDROID_VERSION" == "android13" && "$KERNEL_VERSION" == "5.10" ]]; then
-            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/kernel/abi/compare_to_symbol_list
-          elif [[ "$ANDROID_VERSION" == "android13" && "$KERNEL_VERSION" == "5.15" ]]; then
-            sed -i 's/^\s*exit 1$/    echo "Who Cares? Bypassing Now!"/' build/kernel/abi/compare_to_symbol_list
-          elif [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "5.15" ]]; then
-            perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
-          elif [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "6.1" ]]; then
-            perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
-          elif [[ "$ANDROID_VERSION" == "android15" && "$KERNEL_VERSION" == "6.6" ]]; then
+          if [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "5.15" ]]; then
             perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g' build/kernel/abi/check_buildtime_symbol_protection.py
           fi
 
