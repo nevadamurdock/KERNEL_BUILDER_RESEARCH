@@ -51,6 +51,8 @@ jobs:
           cd kernel-workspace
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-5.15 --depth=1
           repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+          # Menyamakan nama folder direktori kerja jika perlu
+          ln -sf $(pwd) ../kernel 
 
       - name: Setup ReSukiSU (Automatic Script)
         run: |
@@ -130,31 +132,24 @@ jobs:
         run: |
           set -ex
           cd kernel-workspace/common
-          
           [ -f Makefile ] && sed -i 's/ -dirty//g' Makefile
           [ -f arch/arm64/configs/gki_defconfig ] && sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/g' arch/arm64/configs/gki_defconfig
           find . -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/SKIP_CP_KERNEL_HDRS=1//g' {} +
           [ -f include/generated/utsrelease.h ] && sed -i 's/^UTS_RELEASE.*/UTS_RELEASE="GusKernel"/' include/generated/utsrelease.h || true
 
       - name: Build Kernel
-        working-directory: ${{ github.workspace }}/kernel-workspace
+        working-directory: ${{ github.workspace }}/kernel
         env:
           SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
           KBUILD_BUILD_TIMESTAMP: ${{ env.KBUILD_BUILD_TIMESTAMP }}
         run: |
           set -ex
-          
-          export LLVM=1
-          export LD=ld.lld
-          export HOSTLD=ld.lld
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export SKIP_DEFCONFIG_VALIDATION=1
-          export SKIP_IF_MODULES_CHANGED=1
-
           if [ -f "build/build.sh" ]; then
-            GKI_DEFCONFIG_FRAGMENT="${{ github.workspace }}/wild_gki.fragment" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+            #SKIP_MRPROPER=1
+            GKI_DEFCONFIG_FRAGMENT="$GITHUB_WORKSPACE/wild_gki.fragment" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
           else
-            cp "${{ github.workspace }}/wild_gki.fragment" common/arch/arm64/configs/wild_gki.fragment
+            # Copy fragment to kernel tree for bazel
+            cp "$GITHUB_WORKSPACE/wild_gki.fragment" common/arch/arm64/configs/wild_gki.fragment
             tools/bazel build --config=release --stamp --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
           fi
 
