@@ -50,7 +50,7 @@ jobs:
       - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+          curl -LSs "https://raw.githubusercontent.com/hzzmonetvn/ReSukiSU/main/kernel/setup.sh" | bash
           
           if [ -d "KernelSU" ]; then
             ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
