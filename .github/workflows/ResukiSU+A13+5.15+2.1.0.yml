@@ -94,79 +94,43 @@ jobs:
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
 
-      - name: Ultimate CAKE Integration & Config
+      
+
+      - name: Force CAKE Deep Integration
         run: |
           cd kernel-workspace/common
-          echo "==> Starting CAKE Deep Integration..."
+          
+          # 1. Download source jika belum ada
+          curl -Ls "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/net/sched/sch_cake.c?h=v5.15" -o net/sched/sch_cake.c
 
-          # 1. Patching Kconfig (Menambahkan Menu CAKE)
-          if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
-            sed -i '/config NET_SCH_FQ_CODEL/a \
+          # 2. Registrasi ke Kconfig (Paksa masuk ke menu utama)
+          # Kita masukkan tepat di atas FQ_CODEL
+          sed -i '/config NET_SCH_FQ_CODEL/i \
+          config NET_SCH_CAKE\
+          	tristate "Common Applications Kept Enhanced (CAKE)"\
+          	default y\
+          	help\
+          	  Say Y here if you want to use the CAKE scheduling algorithm.\
+          ' net/sched/Kconfig
 
-             \
-             config NET_SCH_CAKE\
-            tristate "Common Applications Kept Enhanced (CAKE)"\help\Say Y here if you want to use the CAKE scheduling algorithm.' net/sched/Kconfig
-            echo "[OK] Kconfig patched."
-          fi
+          # 3. Registrasi ke Makefile
+          sed -i '/obj-$(CONFIG_NET_SCH_FQ_CODEL)/a obj-$(CONFIG_NET_SCH_CAKE) += sch_cake.o' net/sched/Makefile
 
-          # 2. Patching Makefile (Instruksi Kompilasi)
-          if ! grep -q "obj-\$(CONFIG_NET_SCH_CAKE)" net/sched/Makefile; then
-            echo "obj-\$(CONFIG_NET_SCH_CAKE) += sch_cake.o" >> net/sched/Makefile
-            echo "[OK] Makefile patched."
-          fi
-
-          # 3. Patching sch_api.c (Registrasi Ops)
-          # Menambahkan deklarasi extern agar linker tidak bingung
+          # 4. Registrasi ke sch_api.c
           if ! grep -q "cake_qdisc_ops" net/sched/sch_api.c; then
             sed -i '/extern struct Qdisc_ops fq_codel_qdisc_ops;/a extern struct Qdisc_ops cake_qdisc_ops;' net/sched/sch_api.c
-            echo "[OK] sch_api.c patched."
           fi
 
-          # 4. Fetch Source Code (Mengambil dari Upstream Stable 5.15)
-          if [ ! -f "net/sched/sch_cake.c" ]; then
-            curl -Ls "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/net/sched/sch_cake.c?h=v5.15" -o net/sched/sch_cake.c
-            if [ -s "net/sched/sch_cake.c" ]; then
-              echo "[OK] Source code downloaded."
-            else
-              echo "[ERROR] Failed to download source code!" && exit 1
-            fi
-          fi
-
-          # 5. Inject Ke Defconfig (Aktivasi Otomatis)
-          # Kita masukkan langsung ke gki_defconfig agar tidak perlu repot di step selanjutnya
-          if ! grep -q "CONFIG_NET_SCH_CAKE=y" arch/arm64/configs/gki_defconfig; then
-            cat <<EOF >> arch/arm64/configs/gki_defconfig
+          # 5. Paksa GKI Defconfig
+          sed -i '/CONFIG_NET_SCH_FQ_CODEL/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_NET_SCH/d' arch/arm64/configs/gki_defconfig
+          
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
           CONFIG_NET_SCH_CAKE=y
+          CONFIG_NET_SCH_DEFAULT=y
+          CONFIG_DEFAULT_CAKE=y
+          CONFIG_DEFAULT_NET_SCH="cake"
           EOF
-             echo "[OK] Defconfig activated."
-          fi
-
-      - name: Force CAKE Integration
-        run: |
-          cd kernel-workspace/common
-          
-          # 1. Pastikan Kconfig punya CAKE
-          if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
-            sed -i '/config NET_SCH_FQ_CODEL/i config NET_SCH_CAKE\n\ttristate "CAKE"\n\tdefault y' net/sched/Kconfig
-          fi
-
-          # 2. Paksa Makefile
-          echo "obj-\$(CONFIG_NET_SCH_CAKE) += sch_cake.o" >> net/sched/Makefile
-
-          # 3. Timpa defconfig (Gunakan > untuk menghapus isi lama jika perlu, atau sed -i)
-          # Kita cari baris default_qdisc yang ada dan ganti paksa
-          sed -i 's/CONFIG_DEFAULT_NET_SCH=.*/CONFIG_DEFAULT_NET_SCH="cake"/g' arch/arm64/configs/gki_defconfig
-          
-          # Jika tidak ada barisnya, tambahkan di paling bawah
-          if ! grep -q "CONFIG_DEFAULT_NET_SCH=\"cake\"" arch/arm64/configs/gki_defconfig; then
-            echo 'CONFIG_NET_SCH_CAKE=y' >> arch/arm64/configs/gki_defconfig
-            echo 'CONFIG_NET_SCH_DEFAULT=y' >> arch/arm64/configs/gki_defconfig
-            echo 'CONFIG_DEFAULT_CAKE=y' >> arch/arm64/configs/gki_defconfig
-            echo 'CONFIG_DEFAULT_NET_SCH="cake"' >> arch/arm64/configs/gki_defconfig
-          fi
-
-          # 4. Hapus pfifo_fast dari defconfig jika ada agar tidak ada pilihan lain
-          sed -i 's/CONFIG_DEFAULT_PFIFO_FAST=y/# CONFIG_DEFAULT_PFIFO_FAST is not set/g' arch/arm64/configs/gki_defconfig
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
