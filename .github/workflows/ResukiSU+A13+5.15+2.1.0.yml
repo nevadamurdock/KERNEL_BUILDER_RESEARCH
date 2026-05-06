@@ -94,20 +94,104 @@ jobs:
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
 
-      - name: Inject CAKE into Kconfig
+      - name: Ultimate CAKE Integration & Config
         run: |
           cd kernel-workspace/common
-          # Cek apakah CONFIG_NET_SCH_CAKE sudah ada, jika belum, tambahkan di akhir file
+          echo "==> Starting CAKE Deep Integration..."
+
+          # 1. Patching Kconfig (Menambahkan Menu CAKE)
           if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
-            echo -e "\nconfig NET_SCH_CAKE\n\ttristate \"Common Applications Kept Enhanced (CAKE)\"\n\tdepends on NET_SCHED\n\thelp\n\t  Say Y here if you want to use the CAKE scheduling algorithm.\n" >> net/sched/Kconfig
-            echo "CAKE configuration injected into net/sched/Kconfig"
+            sed -i '/config NET_SCH_FQ_CODEL/a \
+
+             \
+             config NET_SCH_CAKE\
+            tristate "Common Applications Kept Enhanced (CAKE)"\help\Say Y here if you want to use the CAKE scheduling algorithm.' net/sched/Kconfig
+            echo "[OK] Kconfig patched."
           fi
 
-          # Tambahkan juga ke Makefile agar dikompilasi
+          # 2. Patching Makefile (Instruksi Kompilasi)
           if ! grep -q "obj-\$(CONFIG_NET_SCH_CAKE)" net/sched/Makefile; then
             echo "obj-\$(CONFIG_NET_SCH_CAKE) += sch_cake.o" >> net/sched/Makefile
-            echo "CAKE added to net/sched/Makefile"
+            echo "[OK] Makefile patched."
           fi
+
+          # 3. Patching sch_api.c (Registrasi Ops)
+          # Menambahkan deklarasi extern agar linker tidak bingung
+          if ! grep -q "cake_qdisc_ops" net/sched/sch_api.c; then
+            sed -i '/extern struct Qdisc_ops fq_codel_qdisc_ops;/a extern struct Qdisc_ops cake_qdisc_ops;' net/sched/sch_api.c
+            echo "[OK] sch_api.c patched."
+          fi
+
+          # 4. Fetch Source Code (Mengambil dari Upstream Stable 5.15)
+          if [ ! -f "net/sched/sch_cake.c" ]; then
+            curl -Ls "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/net/sched/sch_cake.c?h=v5.15" -o net/sched/sch_cake.c
+            if [ -s "net/sched/sch_cake.c" ]; then
+              echo "[OK] Source code downloaded."
+            else
+              echo "[ERROR] Failed to download source code!" && exit 1
+            fi
+          fi
+
+          # 5. Inject Ke Defconfig (Aktivasi Otomatis)
+          # Kita masukkan langsung ke gki_defconfig agar tidak perlu repot di step selanjutnya
+          if ! grep -q "CONFIG_NET_SCH_CAKE=y" arch/arm64/configs/gki_defconfig; then
+            cat <<EOF >> arch/arm64/configs/gki_defconfig
+          CONFIG_NET_SCH_CAKE=y
+          EOF
+             echo "[OK] Defconfig activated."
+          fi
+
+      - name: Hard-Inforce CAKE as Default Scheduler
+        run: |
+          cd kernel-workspace/common
+          
+          echo "==> Cleaning up existing Network Scheduler configs..."
+          # Menghapus semua entri NET_SCH yang ada di gki_defconfig agar tidak konflik
+          sed -i '/CONFIG_NET_SCH/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_NET_SCH/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_CAKE/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_FQ_CODEL/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_DEFAULT_PFIFO_FAST/d' arch/arm64/configs/gki_defconfig
+
+          echo "==> Injecting CAKE-Only configuration..."
+          # Menyuntikkan konfigurasi murni sesuai permintaanmu
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
+
+          # Network Queueing/Scheduling
+          CONFIG_NET_SCHED=y
+          CONFIG_NET_SCH_CAKE=y
+          CONFIG_NET_SCH_TBF=y
+          CONFIG_NET_SCH_INGRESS=y
+          # Disable others to ensure only CAKE is used
+          # CONFIG_NET_SCH_CBQ is not set
+          # CONFIG_NET_SCH_HTB is not set
+          # CONFIG_NET_SCH_HFSC is not set
+          # CONFIG_NET_SCH_PRIO is not set
+          # CONFIG_NET_SCH_MULTIQ is not set
+          # CONFIG_NET_SCH_RED is not set
+          # CONFIG_NET_SCH_SFB is not set
+          # CONFIG_NET_SCH_SFQ is not set
+          # CONFIG_NET_SCH_TEQL is not set
+          # CONFIG_NET_SCH_GRED is not set
+          # CONFIG_NET_SCH_NETEM is not set
+          # CONFIG_NET_SCH_DRR is not set
+          # CONFIG_NET_SCH_MQPRIO is not set
+          # CONFIG_NET_SCH_CHOKE is not set
+          # CONFIG_NET_SCH_QFQ is not set
+          # CONFIG_NET_SCH_CODEL is not set
+          # CONFIG_NET_SCH_FQ_CODEL is not set
+          # CONFIG_NET_SCH_FQ is not set
+          # CONFIG_NET_SCH_HHF is not set
+          # CONFIG_NET_SCH_PIE is not set
+
+          # Set CAKE as Mandatory Default
+          CONFIG_NET_SCH_DEFAULT=y
+          CONFIG_DEFAULT_CAKE=y
+          # CONFIG_DEFAULT_FQ_CODEL is not set
+          # CONFIG_DEFAULT_PFIFO_FAST is not set
+          CONFIG_DEFAULT_NET_SCH="cake"
+          EOF
+          echo "[DONE] CAKE is now the exclusive default scheduler in defconfig."
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
@@ -134,35 +218,6 @@ jobs:
           CONFIG_TCP_CONG_YEAH=y
           CONFIG_TCP_CONG_ILLINOIS=y
           CONFIG_TCP_CONG_BBR=y
-          # CONFIG_NET_SCH_HFSC is not set
-          # CONFIG_NET_SCH_PRIO is not set
-          # CONFIG_NET_SCH_MULTIQ is not set
-          # CONFIG_NET_SCH_RED is not set
-          # CONFIG_NET_SCH_SFB is not set
-          # CONFIG_NET_SCH_SFQ is not set
-          # CONFIG_NET_SCH_TEQL is not set
-          CONFIG_NET_SCH_TBF=y
-          # CONFIG_NET_SCH_CBS is not set
-          # CONFIG_NET_SCH_ETF is not set
-          # CONFIG_NET_SCH_GRED is not set
-          # CONFIG_NET_SCH_NETEM is not set
-          # CONFIG_NET_SCH_DRR is not set
-          # CONFIG_NET_SCH_MQPRIO is not set
-          # CONFIG_NET_SCH_SKBPRIO is not set
-          # CONFIG_NET_SCH_CHOKE is not set
-          # CONFIG_NET_SCH_QFQ is not set
-          # CONFIG_NET_SCH_CODEL is not set
-          # CONFIG_NET_SCH_FQ_CODEL is not set
-          CONFIG_NET_SCH_CAKE=y
-          # CONFIG_NET_SCH_FQ is not set
-          # CONFIG_NET_SCH_HHF is not set
-          # CONFIG_NET_SCH_PIE is not set
-          CONFIG_NET_SCH_INGRESS=y
-          # CONFIG_NET_SCH_PLUG is not set
-          CONFIG_NET_SCH_DEFAULT=y
-          CONFIG_DEFAULT_CAKE=y
-          # CONFIG_DEFAULT_PFIFO_FAST is not set
-          CONFIG_DEFAULT_NET_SCH="cake"
           CONFIG_DEFAULT_TCP_CONG="westwood"
           
           # KSU & SUSFS & BBG
