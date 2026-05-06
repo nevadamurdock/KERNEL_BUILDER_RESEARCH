@@ -141,57 +141,32 @@ jobs:
              echo "[OK] Defconfig activated."
           fi
 
-      - name: Hard-Inforce CAKE as Default Scheduler
+      - name: Force CAKE Integration
         run: |
           cd kernel-workspace/common
           
-          echo "==> Cleaning up existing Network Scheduler configs..."
-          # Menghapus semua entri NET_SCH yang ada di gki_defconfig agar tidak konflik
-          sed -i '/CONFIG_NET_SCH/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_NET_SCH/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_CAKE/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_FQ_CODEL/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_PFIFO_FAST/d' arch/arm64/configs/gki_defconfig
+          # 1. Pastikan Kconfig punya CAKE
+          if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
+            sed -i '/config NET_SCH_FQ_CODEL/i config NET_SCH_CAKE\n\ttristate "CAKE"\n\tdefault y' net/sched/Kconfig
+          fi
 
-          echo "==> Injecting CAKE-Only configuration..."
-          # Menyuntikkan konfigurasi murni sesuai permintaanmu
-          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          # 2. Paksa Makefile
+          echo "obj-\$(CONFIG_NET_SCH_CAKE) += sch_cake.o" >> net/sched/Makefile
 
-          # Network Queueing/Scheduling
-          CONFIG_NET_SCHED=y
-          CONFIG_NET_SCH_CAKE=y
-          CONFIG_NET_SCH_TBF=y
-          CONFIG_NET_SCH_INGRESS=y
-          # Disable others to ensure only CAKE is used
-          # CONFIG_NET_SCH_CBQ is not set
-          # CONFIG_NET_SCH_HTB is not set
-          # CONFIG_NET_SCH_HFSC is not set
-          # CONFIG_NET_SCH_PRIO is not set
-          # CONFIG_NET_SCH_MULTIQ is not set
-          # CONFIG_NET_SCH_RED is not set
-          # CONFIG_NET_SCH_SFB is not set
-          # CONFIG_NET_SCH_SFQ is not set
-          # CONFIG_NET_SCH_TEQL is not set
-          # CONFIG_NET_SCH_GRED is not set
-          # CONFIG_NET_SCH_NETEM is not set
-          # CONFIG_NET_SCH_DRR is not set
-          # CONFIG_NET_SCH_MQPRIO is not set
-          # CONFIG_NET_SCH_CHOKE is not set
-          # CONFIG_NET_SCH_QFQ is not set
-          # CONFIG_NET_SCH_CODEL is not set
-          # CONFIG_NET_SCH_FQ_CODEL is not set
-          # CONFIG_NET_SCH_FQ is not set
-          # CONFIG_NET_SCH_HHF is not set
-          # CONFIG_NET_SCH_PIE is not set
+          # 3. Timpa defconfig (Gunakan > untuk menghapus isi lama jika perlu, atau sed -i)
+          # Kita cari baris default_qdisc yang ada dan ganti paksa
+          sed -i 's/CONFIG_DEFAULT_NET_SCH=.*/CONFIG_DEFAULT_NET_SCH="cake"/g' arch/arm64/configs/gki_defconfig
+          
+          # Jika tidak ada barisnya, tambahkan di paling bawah
+          if ! grep -q "CONFIG_DEFAULT_NET_SCH=\"cake\"" arch/arm64/configs/gki_defconfig; then
+            echo 'CONFIG_NET_SCH_CAKE=y' >> arch/arm64/configs/gki_defconfig
+            echo 'CONFIG_NET_SCH_DEFAULT=y' >> arch/arm64/configs/gki_defconfig
+            echo 'CONFIG_DEFAULT_CAKE=y' >> arch/arm64/configs/gki_defconfig
+            echo 'CONFIG_DEFAULT_NET_SCH="cake"' >> arch/arm64/configs/gki_defconfig
+          fi
 
-          # Set CAKE as Mandatory Default
-          CONFIG_NET_SCH_DEFAULT=y
-          CONFIG_DEFAULT_CAKE=y
-          # CONFIG_DEFAULT_FQ_CODEL is not set
-          # CONFIG_DEFAULT_PFIFO_FAST is not set
-          CONFIG_DEFAULT_NET_SCH="cake"
-          EOF
-          echo "[DONE] CAKE is now the exclusive default scheduler in defconfig."
+          # 4. Hapus pfifo_fast dari defconfig jika ada agar tidak ada pilihan lain
+          sed -i 's/CONFIG_DEFAULT_PFIFO_FAST=y/# CONFIG_DEFAULT_PFIFO_FAST is not set/g' arch/arm64/configs/gki_defconfig
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
