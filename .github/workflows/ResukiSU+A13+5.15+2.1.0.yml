@@ -125,7 +125,6 @@ jobs:
           CONFIG_DEFAULT_TCP_CONG="bbr"
           
           # KSU & SUSFS & BBG
-          CONFIG_KPM=y
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
