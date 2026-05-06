@@ -50,7 +50,7 @@ jobs:
       - name: Setup ReSukiSU (Automatic Script)
         run: |
           cd kernel-workspace
-          curl -LSs "https://raw.githubusercontent.com/hzzmonetvn/ReSukiSU/main/kernel/setup.sh" | bash
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           
           if [ -d "KernelSU" ]; then
             ln -sf $(pwd)/KernelSU $(pwd)/common/drivers/kernelsu
@@ -121,8 +121,8 @@ jobs:
           CONFIG_TCP_CONG_BBR=y
           CONFIG_NET_SCH_FQ=y
           CONFIG_NET_SCH_FQ_CODEL=y
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_DEFAULT_TCP_CONG="bbr"
+          CONFIG_NET_SCH_CAKE=y
+          CONFIG_DEFAULT_TCP_CONG="westwood"
           
           # KSU & SUSFS & BBG
           CONFIG_KPROBES=y
