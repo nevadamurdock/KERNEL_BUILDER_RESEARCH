@@ -93,6 +93,21 @@ jobs:
           if [ ! -f "include/linux/susfs.h" ]; then
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
+
+      - name: Inject CAKE into Kconfig
+        run: |
+          cd kernel-workspace/common
+          # Cek apakah CONFIG_NET_SCH_CAKE sudah ada, jika belum, tambahkan di akhir file
+          if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
+            echo -e "\nconfig NET_SCH_CAKE\n\ttristate \"Common Applications Kept Enhanced (CAKE)\"\n\tdepends on NET_SCHED\n\thelp\n\t  Say Y here if you want to use the CAKE scheduling algorithm.\n" >> net/sched/Kconfig
+            echo "CAKE configuration injected into net/sched/Kconfig"
+          fi
+
+          # Tambahkan juga ke Makefile agar dikompilasi
+          if ! grep -q "obj-\$(CONFIG_NET_SCH_CAKE)" net/sched/Makefile; then
+            echo "obj-\$(CONFIG_NET_SCH_CAKE) += sch_cake.o" >> net/sched/Makefile
+            echo "CAKE added to net/sched/Makefile"
+          fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
