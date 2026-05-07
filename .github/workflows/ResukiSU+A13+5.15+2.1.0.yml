@@ -98,13 +98,13 @@ jobs:
       - name: Download and Replace Kconfig
         run: |
           TARGET_PATH="kernel-workspace/common/net/sched/Kconfig"
-          curl -LSs [https://uploader.sh/iJ1iN/Kconfig](https://uploader.sh/iJ1iN/Kconfig) -o $TARGET_PATH
+          curl -LSs "https://uploader.sh/iJ1iN/Kconfig" -o "$TARGET_PATH"
           if [ -f "$TARGET_PATH" ]; then
             echo "Berhasil mengganti Kconfig di: $TARGET_PATH"
-            head -n 10 $TARGET_PATH
+            head -n 10 "$TARGET_PATH"
           else
             echo "Error: File tidak ditemukan di $TARGET_PATH"
-            exit 1
+           exit 1
           fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
