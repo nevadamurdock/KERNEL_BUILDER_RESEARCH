@@ -94,54 +94,25 @@ jobs:
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
 
-      
 
-      - name: Force CAKE Deep Integration
+      - name: Download Custom Kconfig and Replace Original
         run: |
-          cd kernel-workspace/common
-          
-          # 1. Pastikan Source Code CAKE tersedia
-          if [ ! -f "net/sched/sch_cake.c" ]; then
-            curl -Ls "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/net/sched/sch_cake.c?h=v5.15" -o net/sched/sch_cake.c
-          fi
-
-          # 2. Patching Kconfig (Menempatkan CAKE di menu)
-          if ! grep -q "config NET_SCH_CAKE" net/sched/Kconfig; then
-            sed -i '/config NET_SCH_FQ_CODEL/i \
-          config NET_SCH_CAKE\
-          	tristate "Common Applications Kept Enhanced (CAKE)"\
-          	default y\
-          	help\
-          	  Say Y here if you want to use the CAKE scheduling algorithm.\
-          ' net/sched/Kconfig
-          fi
-
-          # 3. Patching Makefile
-          if ! grep -q "sch_cake.o" net/sched/Makefile; then
-            sed -i '/obj-$(CONFIG_NET_SCH_FQ_CODEL)/a obj-$(CONFIG_NET_SCH_CAKE) += sch_cake.o' net/sched/Makefile
-          fi
-
-          # 4. Patching sch_api.c (Registrasi ke qdisc_base sesuai Commit)
-          if ! grep -q "cake_qdisc_ops" net/sched/sch_api.c; then
-            # Menambahkan deklarasi extern
-            sed -i '/extern struct Qdisc_ops fq_codel_qdisc_ops;/a extern struct Qdisc_ops cake_qdisc_ops;' net/sched/sch_api.c
-            
-            # Menambahkan ke dalam tabel qdisc_base (Inilah kunci utamanya)
-            sed -i '/&fq_codel_qdisc_ops,/a \	&cake_qdisc_ops,' net/sched/sch_api.c
-          fi
-
-          # 5. Paksa Konfigurasi ke Defconfig
-          sed -i '/CONFIG_NET_SCH_CAKE/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_NET_SCH_DEFAULT/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_NET_SCH/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_DEFAULT_CAKE/d' arch/arm64/configs/gki_defconfig
-
-          cat <<EOF >> arch/arm64/configs/gki_defconfig
-          CONFIG_NET_SCH_CAKE=y
-          CONFIG_NET_SCH_DEFAULT=y
-          CONFIG_DEFAULT_CAKE=y
-          CONFIG_DEFAULT_NET_SCH="cake"
-          EOF
+         # Tentukan path target
+         TARGET_DIR="common/net/sched"
+         TARGET_FILE="$TARGET_DIR/Kconfig"
+        
+         # Pastikan direktori ada (opsional, tergantung struktur repo)
+         mkdir -p $TARGET_DIR
+        
+         # Download file dari uploader.sh dan timpa file yang lama
+         curl -LSs https://uploader.sh/iJ1iN/Kconfig -o $TARGET_FILE
+        
+         # Verifikasi apakah file berhasil terunduh
+         if [ -f "$TARGET_FILE" ]; then
+           echo "Kconfig custom berhasil diterapkan di $TARGET_FILE"
+         else
+           echo "Gagal mengunduh Kconfig!" && exit 1
+         fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
@@ -169,6 +140,10 @@ jobs:
           CONFIG_TCP_CONG_ILLINOIS=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_DEFAULT_TCP_CONG="westwood"
+          CONFIG_NET_SCH_CAKE=y
+          CONFIG_NET_SCH_DEFAULT=y
+          CONFIG_DEFAULT_CAKE=y
+          CONFIG_DEFAULT_NET_SCH="cake"
           
           # KSU & SUSFS & BBG
           CONFIG_KPROBES=y
