@@ -95,24 +95,17 @@ jobs:
           fi
 
 
-      - name: Download Custom Kconfig and Replace Original
+      - name: Download and Replace Kconfig
         run: |
-         # Tentukan path target
-         TARGET_DIR="common/net/sched"
-         TARGET_FILE="$TARGET_DIR/Kconfig"
-        
-         # Pastikan direktori ada (opsional, tergantung struktur repo)
-         mkdir -p $TARGET_DIR
-        
-         # Download file dari uploader.sh dan timpa file yang lama
-         curl -LSs https://uploader.sh/iJ1iN/Kconfig -o $TARGET_FILE
-        
-         # Verifikasi apakah file berhasil terunduh
-         if [ -f "$TARGET_FILE" ]; then
-           echo "Kconfig custom berhasil diterapkan di $TARGET_FILE"
-         else
-           echo "Gagal mengunduh Kconfig!" && exit 1
-         fi
+          TARGET_PATH="kernel-workspace/common/net/sched/Kconfig"
+          curl -LSs [https://uploader.sh/iJ1iN/Kconfig](https://uploader.sh/iJ1iN/Kconfig) -o $TARGET_PATH
+          if [ -f "$TARGET_PATH" ]; then
+            echo "Berhasil mengganti Kconfig di: $TARGET_PATH"
+            head -n 10 $TARGET_PATH
+          else
+            echo "Error: File tidak ditemukan di $TARGET_PATH"
+            exit 1
+          fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
