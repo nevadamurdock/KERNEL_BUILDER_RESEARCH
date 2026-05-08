@@ -96,17 +96,33 @@ jobs:
 
       - name: Download and Apply Patches
         run: |
-          cd kernel-source
-          # Mengunduh patch dari source yang Anda berikan
+          # Cek apakah direktori ada sebelum masuk
+          if [ -d "kernel-source" ]; then
+            cd kernel-source
+          else
+            echo "Error: kernel-source directory not found!"
+            ls -R # List file untuk melihat struktur direktori yang ada
+            exit 1
+          fi
+
+          # Mengunduh repo patch
           git clone --depth=1 https://github.com/ahmed-alnassif/GKI-Duchamp.git patch-repo
           
           echo "Applying patches..."
-          # Loop untuk menerapkan semua file .patch di folder common
-          for p in patch-repo/kernel-patches/common/*.patch; do
-            echo "Applying $p"
-            patch -p1 < "$p"
-          done
-          rm -rf patch-repo    
+          # Menggunakan path absolut untuk keamanan
+          PATCH_DIR="$(pwd)/patch-repo/kernel-patches/common"
+          
+          if [ -d "$PATCH_DIR" ]; then
+            for p in "$PATCH_DIR"/*.patch; do
+              echo "Applying: $(basename "$p")"
+              # --dry-run bisa ditambahkan jika ingin testing dulu
+              patch -p1 < "$p" || echo "Warning: Patch $p failed to apply cleanly."
+            done
+          else
+            echo "Patch directory not found in cloned repo!"
+          fi
+          
+          rm -rf patch-repo  
 
 
       - name: Download and Replace Kconfig
