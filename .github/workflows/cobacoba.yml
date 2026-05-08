@@ -94,35 +94,27 @@ jobs:
             cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
           fi
 
-      - name: Download and Apply Patches
+      - name: Apply Patches to Common
         run: |
-          # Cek apakah direktori ada sebelum masuk
-          if [ -d "kernel-source" ]; then
-            cd kernel-source
-          else
-            echo "Error: kernel-source directory not found!"
-            ls -R # List file untuk melihat struktur direktori yang ada
-            exit 1
-          fi
-
-          # Mengunduh repo patch
-          git clone --depth=1 https://github.com/ahmed-alnassif/GKI-Duchamp.git patch-repo
+          cd kernel-workspace
+          
+          # Clone repo patches secara temporary
+          git clone --depth=1 https://github.com/ahmed-alnassif/GKI-Duchamp.git temp_patch_repo
+          
+          # Salin patch ke folder common yang sudah ada
+          # Pastikan folder common benar-benar ada di root kernel-workspace
+          cp temp_patch_repo/kernel-patches/common/*.patch common/
           
           echo "Applying patches..."
-          # Menggunakan path absolut untuk keamanan
-          PATCH_DIR="$(pwd)/patch-repo/kernel-patches/common"
+          # Jalankan patch dari root kernel-workspace agar path internal patch valid
+          for p in common/*.patch; do
+            echo "Applying $p"
+            patch -p1 < "$p" || echo "Warning: Patch $p failed to apply."
+          done
           
-          if [ -d "$PATCH_DIR" ]; then
-            for p in "$PATCH_DIR"/*.patch; do
-              echo "Applying: $(basename "$p")"
-              # --dry-run bisa ditambahkan jika ingin testing dulu
-              patch -p1 < "$p" || echo "Warning: Patch $p failed to apply cleanly."
-            done
-          else
-            echo "Patch directory not found in cloned repo!"
-          fi
-          
-          rm -rf patch-repo  
+          # Bersihkan file patch setelah selesai agar tidak masuk ke build
+          rm common/*.patch
+          rm -rf temp_patch_repo
 
 
       - name: Download and Replace Kconfig
