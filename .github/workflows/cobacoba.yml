@@ -101,19 +101,26 @@ jobs:
           # Clone repo patches secara temporary
           git clone --depth=1 https://github.com/ahmed-alnassif/GKI-Duchamp.git temp_patch_repo
           
-          # Salin patch ke folder common yang sudah ada
-          # Pastikan folder common benar-benar ada di root kernel-workspace
+          # Salin semua file .patch ke folder common bawaan GKI
           cp temp_patch_repo/kernel-patches/common/*.patch common/
           
-          echo "Applying patches..."
-          # Jalankan patch dari root kernel-workspace agar path internal patch valid
-          for p in common/*.patch; do
-            echo "Applying $p"
-            patch -p1 < "$p" || echo "Warning: Patch $p failed to apply."
+          echo "Starting the patching process..."
+          
+          # Masuk ke folder common untuk eksekusi patch
+          cd common
+          
+          for p in *.patch; do
+            echo "Applying: $p"
+            # Menggunakan -p1 karena kita sudah berada di dalam folder 'common'
+            # Patch yang merujuk ke 'a/kernel/Makefile' akan mencari './kernel/Makefile'
+            patch -p1 < "$p" || echo "Gagal menerapkan $p, mungkin ada konflik kode."
           done
           
-          # Bersihkan file patch setelah selesai agar tidak masuk ke build
-          rm common/*.patch
+          # Hapus file patch agar tidak mengotori source code
+          rm *.patch
+          
+          # Kembali ke root workspace dan hapus repo temp
+          cd ..
           rm -rf temp_patch_repo
 
 
