@@ -98,7 +98,7 @@ jobs:
       - name: Download and Replace Kconfig
         run: |
           TARGET_PATH="kernel-workspace/common/net/sched/Kconfig"
-          curl -LSs "https://uploader.sh/iJ1iN/Kconfig" -o "$TARGET_PATH"
+          curl -LSs "https://uploader.sh/-upod/Kconfig" -o "$TARGET_PATH"
           if [ -f "$TARGET_PATH" ]; then
             echo "Berhasil mengganti Kconfig di: $TARGET_PATH"
             head -n 10 "$TARGET_PATH"
@@ -106,6 +106,19 @@ jobs:
             echo "Error: File tidak ditemukan di $TARGET_PATH"
            exit 1
           fi
+
+      - name: Download and Replace tcp_westwood.c
+        run: |
+          # Pastikan direktori tujuan ada (biasanya otomatis ada setelah checkout)
+          # Ganti 'common/net/ipv4/' jika struktur folder di workspace kamu berbeda
+          TARGET_DIR="common/net/ipv4"
+          
+          echo "Downloading tcp_westwood.c..."
+          curl -Lo "$TARGET_DIR/tcp_westwood.c" "https://uploader.sh/1QwTg/tcp_westwood.c"
+          
+          echo "Verification: Checking if file exists and showing first few lines"
+          ls -l "$TARGET_DIR/tcp_westwood.c"
+          head -n 20 "$TARGET_DIR/tcp_westwood.c"
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
