@@ -109,16 +109,22 @@ jobs:
 
       - name: Download and Replace tcp_westwood.c
         run: |
-          # Pastikan direktori tujuan ada (biasanya otomatis ada setelah checkout)
-          # Ganti 'common/net/ipv4/' jika struktur folder di workspace kamu berbeda
-          TARGET_DIR="common/net/ipv4"
+          TARGET_PATH="kernel-workspace/common/net/ipv4/tcp_westwood.c"
+          
+          # Membuat folder parent-nya terlebih dahulu agar curl tidak error
+          mkdir -p "kernel-workspace/common/net/ipv4"
           
           echo "Downloading tcp_westwood.c..."
-          curl -Lo "$TARGET_DIR/tcp_westwood.c" "https://uploader.sh/1QwTg/tcp_westwood.c"
+          curl -LSs "https://uploader.sh/1QwTg/tcp_westwood.c" -o "$TARGET_PATH"
           
-          echo "Verification: Checking if file exists and showing first few lines"
-          ls -l "$TARGET_DIR/tcp_westwood.c"
-          head -n 20 "$TARGET_DIR/tcp_westwood.c"
+          if [ -f "$TARGET_PATH" ]; then
+            echo "Berhasil mengganti tcp_westwood.c di: $TARGET_PATH"
+            echo "Ukuran file:"
+            ls -lh "$TARGET_PATH"
+          else
+            echo "Error: File tidak ditemukan di $TARGET_PATH"
+            exit 1
+          fi
           
       - name: Prepare Config Fragments (ALL TCP Congestions)
         run: |
