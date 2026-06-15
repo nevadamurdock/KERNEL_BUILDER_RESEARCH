@@ -98,7 +98,7 @@ jobs:
       - name: Download and Replace Kconfig
         run: |
           TARGET_PATH="kernel-workspace/common/net/sched/Kconfig"
-          curl -LSs "https://uploader.sh/-upod/Kconfig" -o "$TARGET_PATH"
+          curl -LSs "https://uploader.sh/tpcOi/Kconfig" -o "$TARGET_PATH"
           if [ -f "$TARGET_PATH" ]; then
             echo "Berhasil mengganti Kconfig di: $TARGET_PATH"
             head -n 10 "$TARGET_PATH"
@@ -115,7 +115,7 @@ jobs:
           mkdir -p "kernel-workspace/common/net/ipv4"
           
           echo "Downloading tcp_westwood.c..."
-          curl -LSs "https://uploader.sh/1QwTg/tcp_westwood.c" -o "$TARGET_PATH"
+          curl -LSs "https://uploader.sh/68aq_/tcp_westwood.c" -o "$TARGET_PATH"
           
           if [ -f "$TARGET_PATH" ]; then
             echo "Berhasil mengganti tcp_westwood.c di: $TARGET_PATH"
