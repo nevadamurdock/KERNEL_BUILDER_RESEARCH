@@ -88,24 +88,28 @@ jobs:
           # 3. Jalankan patch utama SusFS
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # 4. CLEANUP & ULTIMATE HARD-INJECT FOR NAMESPACE.C
-          # Bersihkan sisa modifikasi eksperimen sebelumnya agar file steril
+          # 4. FIX SINTAKSIS & BLOK `#ifdef` YANG MERUSAK KODE (Anti-Bentrok KSU/SusFS)
+          # Seringkali patch SusFS menyisakan `#ifdef CONFIG_KSU_SUSFS` yang merusak penutup kurung `}`
+          # Kita hapus pelindung macro tersebut agar kodenya tereksekusi murni secara linear
+          sed -i 's/#ifdef CONFIG_KSU_SUSFS/\/\/ #ifdef CONFIG_KSU_SUSFS/g' fs/namespace.c
+          sed -i 's/#ifndef CONFIG_KSU_SUSFS/\/\/ #ifndef CONFIG_KSU_SUSFS/g' fs/namespace.c
+          
+          # 5. INJECT HEADER & EXTERN SYMBOL UTAMA
+          # Bersihkan bekas inject lama agar steril
           sed -i '/#define DEFAULT_KSU_MNT_ID/d' fs/namespace.c
           sed -i '/#define DEFAULT_KSU_MNT_GROUP_ID/d' fs/namespace.c
           sed -i '/#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT/d' fs/namespace.c
           sed -i '/#define CL_COPY_MNT_NS/d' fs/namespace.c
           sed -i '/linux\/susfs.h/d' fs/namespace.c
-          sed -i '/CONFIG_KSU_SUSFS/d' fs/namespace.c
           sed -i '/susfs_is_current_ksu_domain/d' fs/namespace.c
           sed -i '/susfs_is_sdcard_android_data_not_decrypted/d' fs/namespace.c
           
-          # Inject block deklarasi mandiri di baris paling atas agar compiler tidak protes 'implicit declaration' atau 'undeclared identifier'
+          # Inject block deklarasi mandiri di baris paling atas fs/namespace.c
           cat << 'EOF' > fs/namespace.c.tmp
           #include <linux/cred.h>
           #include <linux/sched.h>
           #include <linux/susfs.h>
 
-          /* Force Define SusFS variables and functions for KSU Hybrid Integration */
           #ifndef CL_COPY_MNT_NS
           #define CL_COPY_MNT_NS 0x02000000
           #endif
@@ -115,11 +119,10 @@ jobs:
           extern struct static_key_false susfs_is_sdcard_android_data_not_decrypted;
           EOF
 
-          # Gabungkan deklarasi paksa di atas dengan isi asli fs/namespace.c
           cat fs/namespace.c >> fs/namespace.c.tmp
           mv fs/namespace.c.tmp fs/namespace.c
           
-          # 5. Perbaikan manual untuk task_mmu.c jika sublevel di bawah 210
+          # 6. Perbaikan manual untuk task_mmu.c jika sublevel di bawah 210
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
