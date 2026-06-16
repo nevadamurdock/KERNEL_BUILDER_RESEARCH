@@ -73,31 +73,43 @@ jobs:
           
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
           
-          # 1. Salin header files SusFS terlebih dahulu ke include kernel
+          # 1. Salin header files SusFS ke folder include kernel
           cp susfs_src/kernel_patches/include/linux/susfs.h common/include/linux/
           
-          # 2. Salin file fs milik SusFS ke tempat yang tepat
+          # Salin susfs_def.h jika ada di source patches
+          if [ -f "susfs_src/kernel_patches/include/linux/susfs_def.h" ]; then
+            cp susfs_src/kernel_patches/include/linux/susfs_def.h common/include/linux/
+          fi
+          
+          # 2. Salin core file fs milik SusFS
           cp susfs_src/kernel_patches/fs/susfs.c common/fs/
-          cp susfs_src/kernel_patches/include/linux/susfs_def.h common/include/linux/ 2>/dev/null || true
           
           cd common
           
-          # 3. Jalankan patch utama SusFS dengan toleransi fuzz agar nge-blend dengan KSU/ReSukiSU
-          # Kita tidak langsung menimpa namespace.c, melainkan membiarkan tools 'patch' menggabungkannya
+          # 3. Jalankan patch utama SusFS
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # 4. FIX MANUAL: Paksa memasukkan include KSU dan SusFS ke fs/namespace.c jika patch tidak otomatis menambahkannya
-          if ! grep -q "linux/susfs.h" fs/namespace.c; then
-            sed -i '1s/^/#include <linux\/susfs.h>\n/' fs/namespace.c
+          # 4. FIX MANUAL: Rapikan bagian paling atas fs/namespace.c
+          # Kita pastikan linux/cred.h dipanggil sebelum susfs agar current_uid() dikenali.
+          # Kita juga bersihkan sisa-sisa inject makro manual kemarin agar tidak macro redefined.
+          
+          # Hapus inject manual kemarin jika masih tersisa di workspace
+          sed -i '/#define DEFAULT_KSU_MNT_ID/d' fs/namespace.c
+          sed -i '/#define DEFAULT_KSU_MNT_GROUP_ID/d' fs/namespace.c
+          sed -i '/#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT/d' fs/namespace.c
+          sed -i '/#define CL_COPY_MNT_NS/d' fs/namespace.c
+          sed -i '/linux\/susfs.h/d' fs/namespace.c
+          
+          # Pasang susfs header dan dependency-nya di BARIS PALING ATAS fs/namespace.c dengan urutan yang benar
+          sed -i '1s/^/\n#include <linux\/susfs.h>\n#define CONFIG_KSU_SUSFS 1\n/' fs/namespace.c
+          sed -i '1s/^/#include <linux\/cred.h>\n#include <linux\/sched.h>\n/' fs/namespace.c
+          
+          # Tambahan: Definisikan CL_COPY_MNT_NS jika compiler masih protes hilang (karena tidak ada di susfs_def.h)
+          if ! grep -q "CL_COPY_MNT_NS" fs/namespace.c && ! grep -q "CL_COPY_MNT_NS" include/linux/susfs_def.h; then
+            sed -i '/linux\/susfs.h/a #define CL_COPY_MNT_NS 0x02000000' fs/namespace.c
           fi
           
-          # Tambahkan include ksu.h jika ReSukiSU membutuhkannya di namespace.c
-          if [ -d "drivers/kernelsu" ] && ! grep -q "drivers/kernelsu" fs/namespace.c; then
-            # Mencari baris setelah include susfs untuk menyelipkan include KSU atau mendefinisikan ID cadangan
-            sed -i '/linux\/susfs.h/a #define DEFAULT_KSU_MNT_ID 1000000\n#define DEFAULT_KSU_MNT_GROUP_ID 1000000\n#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x01000000\n#define CL_COPY_MNT_NS 0x02000000' fs/namespace.c
-          fi
-          
-          # 5. Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
+          # 5. Perbaikan manual untuk task_mmu.c jika sublevel di bawah 210
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
