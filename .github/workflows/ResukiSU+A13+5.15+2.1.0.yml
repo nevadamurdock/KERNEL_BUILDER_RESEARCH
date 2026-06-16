@@ -72,28 +72,36 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs_src
           
           SUBLEVEL=$(grep "^SUBLEVEL =" common/Makefile | awk '{print $3}')
-          cp -r susfs_src/kernel_patches/fs/* common/fs/
-          cp -r susfs_src/kernel_patches/include/linux/* common/include/linux/
+          
+          # 1. Salin header files SusFS terlebih dahulu ke include kernel
+          cp susfs_src/kernel_patches/include/linux/susfs.h common/include/linux/
+          
+          # 2. Salin file fs milik SusFS ke tempat yang tepat
+          cp susfs_src/kernel_patches/fs/susfs.c common/fs/
+          cp susfs_src/kernel_patches/include/linux/susfs_def.h common/include/linux/ 2>/dev/null || true
           
           cd common
           
-          # SOLUSI: Hapus baris yang sering konflik di task_mmu.c sebelum patch
-          # Biasanya konflik di bagian header/include
-          
-          # Jalankan patch dengan toleransi fuzz 3
+          # 3. Jalankan patch utama SusFS dengan toleransi fuzz agar nge-blend dengan KSU/ReSukiSU
+          # Kita tidak langsung menimpa namespace.c, melainkan membiarkan tools 'patch' menggabungkannya
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
+          # 4. FIX MANUAL: Paksa memasukkan include KSU dan SusFS ke fs/namespace.c jika patch tidak otomatis menambahkannya
+          if ! grep -q "linux/susfs.h" fs/namespace.c; then
+            sed -i '1s/^/#include <linux\/susfs.h>\n/' fs/namespace.c
+          fi
+          
+          # Tambahkan include ksu.h jika ReSukiSU membutuhkannya di namespace.c
+          if [ -d "drivers/kernelsu" ] && ! grep -q "drivers/kernelsu" fs/namespace.c; then
+            # Mencari baris setelah include susfs untuk menyelipkan include KSU atau mendefinisikan ID cadangan
+            sed -i '/linux\/susfs.h/a #define DEFAULT_KSU_MNT_ID 1000000\n#define DEFAULT_KSU_MNT_GROUP_ID 1000000\n#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x01000000\n#define CL_COPY_MNT_NS 0x02000000' fs/namespace.c
+          fi
+          
+          # 5. Perbaikan manual untuk task_mmu.c jika patch gagal di bagian show_pad
           if [ "$SUBLEVEL" -le 210 ]; then 
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
-
-          # Tambahan: Pastikan SUSFS terdefinisi di include
-          if [ ! -f "include/linux/susfs.h" ]; then
-            cp ../susfs_src/kernel_patches/include/linux/susfs.h include/linux/
-          fi
-
 
       - name: Download and Replace Kconfig
         run: |
