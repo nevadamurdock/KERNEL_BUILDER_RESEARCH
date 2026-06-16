@@ -89,12 +89,9 @@ jobs:
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
           # 4. ULTIMATE CLEANUP PREPROCESSOR DI fs/namespace.c
-          # Kita hapus total semua baris macro pembungkus KSU_SUSFS agar kodenya melebur secara murni
-          # Ini mencegah error '#endif without #if' dan kesalahan parse kurung kurawal
           sed -i '/CONFIG_KSU_SUSFS/d' fs/namespace.c
           
           # Hapus sisa-sisa #else dan #endif yang terikat dengan blok susfs_sus_mount bawaan patch
-          # (Menggunakan pencarian ekspresi berbasis komentar penanda patch SusFS jika ada)
           sed -i 's/^#else\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #else/g' fs/namespace.c
           sed -i 's/^#endif\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #endif/g' fs/namespace.c
           
@@ -107,20 +104,19 @@ jobs:
           sed -i '/susfs_is_current_ksu_domain/d' fs/namespace.c
           sed -i '/susfs_is_sdcard_android_data_not_decrypted/d' fs/namespace.c
           
-          # 5. INJECT HEADER & EXTERN SYMBOL DI BARIS PALING ATAS
-          cat << 'EOF' > fs/namespace.c.tmp
-          #include <linux/cred.h>
-          #include <linux/sched.h>
-          #include <linux/susfs.h>
-
-          #ifndef CL_COPY_MNT_NS
-          #define CL_COPY_MNT_NS 0x02000000
-          #endif
-
-          extern bool susfs_is_current_ksu_domain(void);
-          #include <linux/jump_label.h>
-          extern struct static_key_false susfs_is_sdcard_android_data_not_decrypted;
-          EOF
+          # 5. INJECT HEADER & EXTERN SYMBOL MENGGUNAKAN PRINTF (Aman dari YAML Parsing Error)
+          printf "%s\n" \
+            "#include <linux/cred.h>" \
+            "#include <linux/sched.h>" \
+            "#include <linux/susfs.h>" \
+            "" \
+            "#ifndef CL_COPY_MNT_NS" \
+            "#define CL_COPY_MNT_NS 0x02000000" \
+            "#endif" \
+            "" \
+            "extern bool susfs_is_current_ksu_domain(void);" \
+            "#include <linux/jump_label.h>" \
+            "extern struct static_key_false susfs_is_sdcard_android_data_not_decrypted;" > fs/namespace.c.tmp
 
           cat fs/namespace.c >> fs/namespace.c.tmp
           mv fs/namespace.c.tmp fs/namespace.c
@@ -130,7 +126,7 @@ jobs:
             sed -i 's/goto show_pad;/return 0;/g' ./fs/proc/task_mmu.c
             sed -i 's/^show_pad:/ \/\/ show_pad:/g' ./fs/proc/task_mmu.c
           fi
-
+          
       - name: Download and Replace Kconfig
         run: |
           TARGET_PATH="kernel-workspace/common/net/sched/Kconfig"
