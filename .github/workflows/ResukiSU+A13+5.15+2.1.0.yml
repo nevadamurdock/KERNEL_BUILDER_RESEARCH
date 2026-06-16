@@ -88,14 +88,17 @@ jobs:
           # 3. Jalankan patch utama SusFS
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # 4. FIX SINTAKSIS & BLOK `#ifdef` YANG MERUSAK KODE (Anti-Bentrok KSU/SusFS)
-          # Seringkali patch SusFS menyisakan `#ifdef CONFIG_KSU_SUSFS` yang merusak penutup kurung `}`
-          # Kita hapus pelindung macro tersebut agar kodenya tereksekusi murni secara linear
-          sed -i 's/#ifdef CONFIG_KSU_SUSFS/\/\/ #ifdef CONFIG_KSU_SUSFS/g' fs/namespace.c
-          sed -i 's/#ifndef CONFIG_KSU_SUSFS/\/\/ #ifndef CONFIG_KSU_SUSFS/g' fs/namespace.c
+          # 4. ULTIMATE CLEANUP PREPROCESSOR DI fs/namespace.c
+          # Kita hapus total semua baris macro pembungkus KSU_SUSFS agar kodenya melebur secara murni
+          # Ini mencegah error '#endif without #if' dan kesalahan parse kurung kurawal
+          sed -i '/CONFIG_KSU_SUSFS/d' fs/namespace.c
           
-          # 5. INJECT HEADER & EXTERN SYMBOL UTAMA
-          # Bersihkan bekas inject lama agar steril
+          # Hapus sisa-sisa #else dan #endif yang terikat dengan blok susfs_sus_mount bawaan patch
+          # (Menggunakan pencarian ekspresi berbasis komentar penanda patch SusFS jika ada)
+          sed -i 's/^#else\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #else/g' fs/namespace.c
+          sed -i 's/^#endif\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #endif/g' fs/namespace.c
+          
+          # Tambahan pembersihan darurat untuk sisa-sisa modifikasi script sebelumnya
           sed -i '/#define DEFAULT_KSU_MNT_ID/d' fs/namespace.c
           sed -i '/#define DEFAULT_KSU_MNT_GROUP_ID/d' fs/namespace.c
           sed -i '/#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT/d' fs/namespace.c
@@ -104,7 +107,7 @@ jobs:
           sed -i '/susfs_is_current_ksu_domain/d' fs/namespace.c
           sed -i '/susfs_is_sdcard_android_data_not_decrypted/d' fs/namespace.c
           
-          # Inject block deklarasi mandiri di baris paling atas fs/namespace.c
+          # 5. INJECT HEADER & EXTERN SYMBOL DI BARIS PALING ATAS
           cat << 'EOF' > fs/namespace.c.tmp
           #include <linux/cred.h>
           #include <linux/sched.h>
