@@ -85,29 +85,18 @@ jobs:
           
           cd common
           
-          # 3. Jalankan patch utama SusFS
+          # 3. Kembalikan fs/namespace.c ke kondisi awal (steril) sebelum di-patch ulang
+          git checkout fs/namespace.c
+          
+          # 4. Jalankan patch utama SusFS secara resmi
           patch -p1 --fuzz=3 < ../susfs_src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch || true
           
-          # 4. ULTIMATE CLEANUP PREPROCESSOR DI fs/namespace.c
-          sed -i '/CONFIG_KSU_SUSFS/d' fs/namespace.c
-          
-          # Hapus sisa-sisa #else dan #endif yang terikat dengan blok susfs_sus_mount bawaan patch
-          sed -i 's/^#else\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #else/g' fs/namespace.c
-          sed -i 's/^#endif\/\/\#ifdef CONFIG_KSU_SUSFS/\/\/ #endif/g' fs/namespace.c
-          
-          # Tambahan pembersihan darurat untuk sisa-sisa modifikasi script sebelumnya
-          sed -i '/#define DEFAULT_KSU_MNT_ID/d' fs/namespace.c
-          sed -i '/#define DEFAULT_KSU_MNT_GROUP_ID/d' fs/namespace.c
-          sed -i '/#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT/d' fs/namespace.c
-          sed -i '/#define CL_COPY_MNT_NS/d' fs/namespace.c
-          sed -i '/linux\/susfs.h/d' fs/namespace.c
-          sed -i '/susfs_is_current_ksu_domain/d' fs/namespace.c
-          sed -i '/susfs_is_sdcard_android_data_not_decrypted/d' fs/namespace.c
-          
-          # 5. INJECT HEADER & EXTERN SYMBOL MENGGUNAKAN PRINTF (Aman dari YAML Parsing Error)
+          # 5. INJECT FLAGS UTAMA LEWAT PRINTF (Tanpa merusak / menghapus struktur #ifdef bawaan patch)
           printf "%s\n" \
             "#include <linux/cred.h>" \
             "#include <linux/sched.h>" \
+            "#define CONFIG_KSU_SUSFS 1" \
+            "#define CONFIG_KSU_SUSFS_SUS_MOUNT 1" \
             "#include <linux/susfs.h>" \
             "" \
             "#ifndef CL_COPY_MNT_NS" \
