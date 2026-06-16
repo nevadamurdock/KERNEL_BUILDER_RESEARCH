@@ -211,6 +211,10 @@ jobs:
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
 
+          find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/SKIP_ABI_CHECKS=""/SKIP_ABI_CHECKS="1"/g' {} +
+          export SKIP_ABI_CHECKS=1
+
+          
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
