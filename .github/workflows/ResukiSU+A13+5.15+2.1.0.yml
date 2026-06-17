@@ -198,6 +198,11 @@ jobs:
           cd kernel-workspace
           set -ex
 
+          # Pengunci tanggal kompilasi agar matched (Mei 2025)
+          export KBUILD_BUILD_TIMESTAMP="Tue May 20 23:45:48 UTC 2025"
+          export KBUILD_BUILD_USER="android-build"
+          export KBUILD_BUILD_HOST="google.com"
+
           # Clean build
           rm -rf out
 
@@ -205,29 +210,30 @@ jobs:
           mkdir -p "$GKI_BIN_PATH"
           ln -sf $(which ld.lld) "$GKI_BIN_PATH/ld"
 
-          # KILL SEMUA VALIDASI GOOGLE
-          # Ini trik supaya dia gak ngecek modules.order sama sekali
+          # KEEP: KILL SEMUA VALIDASI GOOGLE (Aman untuk Samsung)
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/#POST_DEFCONFIG_CMDS=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/FILES="check_modules_list"/#FILES=""/g' {} +
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/check_modules_list//g' {} +
 
-          # ====================================================================
-          # LEGAL GKI ABI WHITELIST INJECTION (Khusus Samsung Anti-Bootloop)
-          # ====================================================================
           # 1. Matikan mode ketat KMI agar kernel mau menerima simbol baru
           find common -maxdepth 2 -name "build.config.gki*" -exec sed -i 's/KMI_SYMBOL_LIST_STRICT_MODE=1/KMI_SYMBOL_LIST_STRICT_MODE=0/g' {} +
           export SKIP_ABI_CHECKS=1
 
-          # 2. Daftarkan fungsi networking (BBR/Westwood/Qdisc) ke whitelist resmi GKI
+          # 2. Daftarkan fungsi networking (BBR/Westwood/Qdisc) ke whitelist resmi GKI Samsung
           cd common
           for sym in __qdisc_calculate_pkt_len pfifo_qdisc_ops qdisc_hash_add qdisc_tree_reduce_backlog qdisc_watchdog_cancel qdisc_watchdog_init qdisc_watchdog_schedule_range_ns register_qdisc register_tcf_proto_ops tc_cleanup_flow_action tc_setup_cb_add tc_setup_cb_call tc_setup_cb_destroy tc_setup_cb_reoffload tc_setup_flow_action tcf_action_check_ctrlact tcf_action_exec tcf_action_set_ctrlact tcf_action_update_stats tcf_block_get tcf_block_put tcf_chain_put_by_act tcf_classify tcf_exts_destroy tcf_exts_dump tcf_exts_dump_stats tcf_exts_num_actions tcf_exts_terse_dump tcf_exts_validate tcf_generic_walker tcf_idr_check_alloc tcf_idr_cleanup tcf_idr_create_from_flags tcf_idr_release tcf_idr_search tcf_idrinfo_destroy tcf_queue_work tcf_register_action tcf_unregister_action unregister_qdisc unregister_tcf_proto_ops; do
             if ! grep -q "$sym" android/abi_gki_aarch64; then
               echo "  $sym" >> android/abi_gki_aarch64
             fi
-           don
+          done
           cd ..
-          # ====================================================================
-          
+
+          # Tambahan: Matikan proteksi DEFEX & Knox Samsung agar anti-bootloop setelah di-flash
+          find common/arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' {} +
+          find common/arch/arm64/configs/ -name "gki_defconfig" -exec sed -i '$a CONFIG_SECURITY_DEFEX=n' {} +
+          find common/arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SECURITY_PROCA=y/CONFIG_SECURITY_PROCA=n/g' {} +
+          find common/arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_KNOX_KCCRE=y/CONFIG_KNOX_KCCRE=n/g' {} +
+
           export LLVM=1
           export LD=ld.lld
           export HOSTLD=ld.lld
